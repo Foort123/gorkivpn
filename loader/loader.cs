@@ -14,7 +14,7 @@ using System.Windows.Forms;
 
 static class Loader {
     const string DEFAULT_URL =
-        "https://github.com/goga00000702-hub/gorkivpn/releases/latest/download/GORKIVPN-win-x64.zip";
+        "https://github.com/Foort123/gorkivpn/releases/latest/download/GORKIVPN-win-x64.zip";
 
     const string SCARY =
         "GORKIVPN — самый опасный вирус в истории интернета.\r\n\r\n" +

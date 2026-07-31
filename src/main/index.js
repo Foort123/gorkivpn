@@ -176,11 +176,15 @@ function createTray() {
 }
 
 app.whenReady().then(() => {
-  const appDir = path.join(__dirname, '..', '..');
-  // упакованный exe: bin/ лежит в app.asar.unpacked, до него путь `..\..\bin`
+  // process.resourcesPath → реальная папка resources рядом с .exe (не внутри .asar)
+  // __dirname внутри asar виртуальный — path.join(__dirname,'..','..') давал двойной asar в пути
   const binDir = process.defaultApp
-    ? path.join(appDir, 'bin')
-    : path.join(appDir, 'resources', 'app.asar.unpacked', 'bin');
+    ? path.join(__dirname, '..', '..', 'bin')          // dev: проект/bin
+    : path.join(process.resourcesPath, 'app.asar.unpacked', 'bin'); // prod: resources/app.asar.unpacked/bin
+
+  // cwd для sing-box — просто нужна любая реальная папка на диске
+  const appDir = app.getPath('userData');
+
   proxyManager = new ProxyManager(appDir, binDir);
 
   createWindow();

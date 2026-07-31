@@ -1,3 +1,28 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+
+# Logs
 *.log
+npm-debug.log*
+
+# Runtime configs (пишутся в userData, не нужны в репо)
+current_config.json
+debug_run.json
+test_run_dns.json
+test_run_dns2.json
+test_tun_full.json
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+
+# Electron builder cache
+.cache/

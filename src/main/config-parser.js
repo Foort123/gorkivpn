@@ -70,20 +70,22 @@ async function generateSingBoxConfig(profile, excluded = []) {
     },
     dns: {
       servers: [
-        // DoT через прокси: TCP-based, работает даже если UDP-relay на сервере сломан
+        // DoT через прокси — весь DNS клиента после подключения
         { tag: "remote", type: "tls", server: "1.1.1.1", detour: "proxy" },
-        // резолвит только домен самого VPN-сервера; без detour запрос идёт напрямую,
-        // мимо route (detour: "direct" тут — FATAL "empty direct outbound makes no sense")
+        // Резолвер для домена самого VPN-сервера и direct-приложений.
+        // БЕЗ detour: в sing-box 1.13 detour:"direct" на UDP DNS → FATAL.
+        // При инициализации outbound'ов (до старта TUN) этот сервер работает напрямую.
         { tag: "local", type: "udp", server: "8.8.8.8" }
       ],
       rules: [
+        // домен VPN-сервера резолвим локально (нужен до установки туннеля)
         { domain: [server], server: "local" },
-        // исключённые резолвят локально, иначе получат чужую гео-выдачу CDN
+        // исключённые приложения резолвят локально, иначе получат чужую CDN-выдачу
         ...(bypass.length ? [{ process_name: bypass, server: "local" }] : []),
-        // ipv4_only: у TUN нет IPv6-адреса, AAAA-ответы дали бы висящие коннекты
+        // весь остальной DNS — через прокси, только A-записи (TUN без IPv6)
         { query_type: ["A", "AAAA"], server: "remote", strategy: "ipv4_only" }
       ],
-      final: "remote"
+      final: "local"  // fallback — прямой, если прокси ещё не поднят
     },
     inbounds: [
       {
@@ -92,8 +94,11 @@ async function generateSingBoxConfig(profile, excluded = []) {
         address: ["172.19.0.1/30"],
         mtu: 9000,
         auto_route: true,
-        strict_route: true,
-        stack: "gvisor"
+        // strict_route: false — если SS сервер недоступен, трафик идёт напрямую
+        // (с true весь интернет ломается при любой проблеме с SS)
+        strict_route: false,
+        // mixed: TCP через system-стек (стабильнее на Windows), UDP через gvisor
+        stack: "mixed"
       }
     ],
     outbounds: [
@@ -112,8 +117,9 @@ async function generateSingBoxConfig(profile, excluded = []) {
     ],
     route: {
       auto_detect_interface: true,
-      // обязателен с 1.12: сервер SS-outbound'а задан доменом, его надо кем-то резолвить
-      default_domain_resolver: { server: "local" },
+      // default_domain_resolver резолвит домены outbound'ов (SS-сервер задан доменом)
+      // strategy ipv4_only — TUN не имеет IPv6-маршрута
+      default_domain_resolver: { server: "local", strategy: "ipv4_only" },
       final: "proxy",
       rules: [
         { port: 53, action: "hijack-dns" },

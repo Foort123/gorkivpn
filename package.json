@@ -5,15 +5,15 @@
   "main": "src/main/index.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder --win portable zip"
   },
   "build": {
     "appId": "com.gorkivpn.app",
     "productName": "GORKIVPN",
+    "artifactName": "${productName}-win-${arch}.${ext}",
     "asar": true,
     "asarUnpack": [
-      "bin/**",
-      "current_config.json"
+      "bin/**"
     ],
     "files": [
       "src/**",
@@ -25,9 +25,11 @@
       "target": [
         {
           "target": "portable",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64"]
         }
       ]
     }
