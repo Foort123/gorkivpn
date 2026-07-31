@@ -1,0 +1,47 @@
+{
+  "name": "gorkivpn",
+  "version": "1.0.0",
+  "description": "GORKIVPN - desktop VPN client (sing-box + Shadowsocks)",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.gorkivpn.app",
+    "productName": "GORKIVPN",
+    "asar": true,
+    "asarUnpack": [
+      "bin/**",
+      "current_config.json"
+    ],
+    "files": [
+      "src/**",
+      "bin/**",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  },
+  "keywords": [
+    "gorkivpn",
+    "vpn",
+    "shadowsocks",
+    "sing-box"
+  ],
+  "author": "Antigravity AI",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^31.2.0",
+    "electron-builder": "^26.15.3"
+  }
+}
