@@ -5,6 +5,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { generateSingBoxConfig, parseSSUrl } = require('./src/main/config-parser');
 const { groupProcesses } = require('./src/main/processes');
+const ProxyManager = require('./src/main/proxy-manager');
 
 const profile = { server: 'example.net', port: 1234, cipher: 'aes-256-gcm', password: 'pw' };
 const singBox = path.join(__dirname, 'bin', 'sing-box.exe');
@@ -60,6 +61,29 @@ function singBoxAccepts(cfg) {
     [parsed.server, parsed.port, parsed.cipher, parsed.password, parsed.name],
     ['host', 99, 'aes-256-gcm', 'pw', 'Name']
   );
+
+  // start() обязан ждать реального старта sing-box, а не резолвиться по таймеру:
+  // иначе приложение пишет "подключено" там, где туннеля нет, и трафик отваливается.
+  // TUN тут не поднять без прав администратора, поэтому проверяем на mixed-инбаунде.
+  const workDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gorki-'));
+  const pm = new ProxyManager(workDir, path.join(__dirname, 'bin'));
+  const listens = (host) => ({
+    log: { level: 'info' },
+    inbounds: [{ type: 'mixed', tag: 'in', listen: host, listen_port: 18234 }],
+    outbounds: [{ type: 'direct', tag: 'direct' }]
+  });
+
+  assert.ok((await pm.start(listens('127.0.0.1'), profile)).success, 'старт резолвится');
+  assert.ok(pm.isConnected);
+  assert.ok(fs.readFileSync(pm.logPath, 'utf-8').includes('sing-box started'), 'лог пишется на диск');
+  await pm.stop();
+  assert.ok(!pm.isConnected);
+
+  // на этот адрес не забиндиться: sing-box печатает FATAL и умирает —
+  // старт обязан отвалиться ошибкой, а не мнимым "подключено"
+  await assert.rejects(pm.start(listens('203.0.113.9'), profile), 'битый конфиг = отказ, а не мнимое подключение');
+  await pm.stop();
+  fs.rmSync(workDir, { recursive: true, force: true });
 
   console.log('OK');
 })();

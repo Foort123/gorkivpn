@@ -55,7 +55,7 @@ static class Loader {
         // Безоконная установка для проверки: GORKIVPN-loader.exe --test-install <папка>
         if (args.Length >= 2 && args[0] == "--test-install") {
             try {
-                InstallTo(url, args[1], null);
+                InstallTo(url, AppFolder(args[1]), null);
                 Environment.Exit(0);
             } catch (Exception ex) {
                 try { File.WriteAllText(args[1] + ".test.log", ex.ToString()); } catch { }
@@ -63,12 +63,10 @@ static class Loader {
             }
         }
 
-        string installed = ReadInstalled();
-        if (installed != null && File.Exists(Path.Combine(installed, "GORKIVPN.exe"))) {
-            Launch(Path.Combine(installed, "GORKIVPN.exe"));
-            return;
-        }
-        Application.Run(new LoaderForm(url));
+        // Загрузчик всегда показывает мастер, даже если GORKIVPN уже стоит:
+        // раньше повторный запуск молча стартовал сам VPN, и переустановить
+        // или сменить папку было нечем. Уже установленный путь просто подставляем.
+        Application.Run(new LoaderForm(url, ReadInstalled()));
     }
 
     static string ReadUrl() {
@@ -105,6 +103,16 @@ static class Loader {
         box.FontSize = fs;
     }
 
+    // В диалоге выбирают родительскую папку (Рабочий стол, диск D:) — распаковывать
+    // 78 файлов прямо в неё нельзя, поэтому приложение всегда кладём в подпапку GORKIVPN.
+    static string AppFolder(string parent) {
+        parent = (parent ?? "").TrimEnd('\\', '/');
+        if (parent.Length == 0) return DefaultDir;
+        if (string.Equals(Path.GetFileName(parent), "GORKIVPN", StringComparison.OrdinalIgnoreCase))
+            return parent;
+        return Path.Combine(parent, "GORKIVPN");
+    }
+
     static void Launch(string exe) {
         try {
             Process.Start(new ProcessStartInfo(exe) { WorkingDirectory = Path.GetDirectoryName(exe) });
@@ -130,8 +138,16 @@ static class Loader {
             if (progress != null) progress("install", 0, 0);
 
             // Переустановка поверх старой копии — только если там точно наше приложение
-            if (Directory.Exists(dest) && File.Exists(Path.Combine(dest, "GORKIVPN.exe")))
-                Directory.Delete(dest, true);
+            if (Directory.Exists(dest) && File.Exists(Path.Combine(dest, "GORKIVPN.exe"))) {
+                try {
+                    Directory.Delete(dest, true);
+                } catch (IOException) {
+                    // файлы держит запущенная копия — системное "отказано в доступе" тут не помогает
+                    throw new IOException("Закройте GORKIVPN (в том числе значок в трее) и повторите установку.");
+                } catch (UnauthorizedAccessException) {
+                    throw new IOException("Закройте GORKIVPN (в том числе значок в трее) и повторите установку.");
+                }
+            }
             Directory.CreateDirectory(dest);
             ZipFile.ExtractToDirectory(zipTmp, dest);
 
@@ -154,7 +170,10 @@ static class Loader {
             sc.WorkingDirectory = Path.GetDirectoryName(exe);
             sc.Description = "GORKIVPN";
             sc.Save();
-        } catch { /* ярлык не критичен */ }
+        } catch (Exception ex) {
+            // ярлык не критичен, но молча пропавший ярлык нечем объяснить — пишем причину
+            try { File.WriteAllText(Path.Combine(MarkerDir, "shortcut_error.txt"), ex.ToString()); } catch { }
+        }
     }
 
     // ---------- Тёмная тема ----------
@@ -348,18 +367,20 @@ static class Loader {
     class LoaderForm : Form {
         const int FORM_W = 460, BOTTOM_H = 64;
         readonly string _url;
+        readonly string _installedDir;
         string _installedExe;
         int _step;
         Panel _content;
         Panel _infoPage, _folderPage, _installPage, _finalPage;
         ModernButton _btnBack, _btnNext, _btnCancel, _btnOpen, _btnClose;
-        RoundedBox _folderBox;
+        RoundedBox _folderBox, _finalBox;
         ModernCheckBox _agree;
         ModernProgressBar _bar;
         Label _status;
 
-        public LoaderForm(string url) {
+        public LoaderForm(string url, string installedDir) {
             _url = url;
+            _installedDir = installedDir;
             Text = "Установка GORKIVPN";
             ClientSize = new Size(FORM_W, 400);
             FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -434,13 +455,13 @@ static class Loader {
                 Left = 24, Top = 56, Width = _content.ClientSize.Width - 48 - 104,
                 Height = 38
             };
-            _folderBox.Text = DefaultDir;
+            _folderBox.Text = _installedDir ?? DefaultDir;
 
             var browse = new ModernButton { Text = "Обзор", Variant = Btn.Ghost, Left = _folderBox.Right + 8, Top = 57, Width = 96, Height = 36 };
             browse.Click += (s, e) => {
                 using (var d = new FolderBrowserDialog()) {
                     try { d.SelectedPath = _folderBox.Text.Trim(); } catch { }
-                    if (d.ShowDialog(this) == DialogResult.OK) _folderBox.Text = d.SelectedPath;
+                    if (d.ShowDialog(this) == DialogResult.OK) _folderBox.Text = AppFolder(d.SelectedPath);
                 }
             };
 
@@ -469,14 +490,14 @@ static class Loader {
 
             // 4. Финал
             _finalPage = NewPage();
-            var final = new RoundedBox(true) {
+            _finalBox = new RoundedBox(true) {
                 Left = 24, Top = 60, Width = _content.ClientSize.Width - 48,
                 Height = _content.ClientSize.Height - 80
             };
-            final.ReadOnly = true;
-            final.Text = FINAL;
+            _finalBox.ReadOnly = true;
+            _finalBox.Text = FINAL;
             _finalPage.Controls.Add(Title("ВСЁ УКРАДЕНО!", C.Danger, 18f));
-            _finalPage.Controls.Add(final);
+            _finalPage.Controls.Add(_finalBox);
         }
 
         void BuildButtons(Panel bottom) {
@@ -518,7 +539,8 @@ static class Loader {
         }
 
         async void StartInstall() {
-            string dest = _folderBox.Text.Trim();
+            // путь могли и вписать руками — подпапку GORKIVPN дорисовываем и здесь
+            string dest = AppFolder(_folderBox.Text.Trim());
             if (dest.Length == 0) {
                 MessageBox.Show("Выберите папку установки.", "GORKIVPN", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
@@ -546,6 +568,10 @@ static class Loader {
                 _installedExe = Path.Combine(dest, "GORKIVPN.exe");
                 _status.Text = "Готово.";
                 _bar.Value = _bar.Maximum;
+                // куда именно легло приложение — иначе после установки его ищут по всему диску
+                string done = FINAL + "\r\n\r\nПапка приложения:\r\n" + dest;
+                _finalBox.Text = done;
+                FitText(_finalBox, done);
                 ShowStep(4);
             } catch (Exception ex) {
                 if (IsDisposed) return;

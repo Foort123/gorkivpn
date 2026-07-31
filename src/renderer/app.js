@@ -36,6 +36,7 @@ let speedTimer = null;
 let trafficWs = null;
 let allProcesses = [];
 let applyTimer = null;
+let logPath = null;
 // Намеренно только в памяти: список выбирается заново после каждого перезапуска
 let excluded = [];
 
@@ -48,6 +49,7 @@ async function init() {
 
   const status = await ipcRenderer.invoke('get-status');
   isConnected = status.isConnected;
+  logPath = status.logPath;
   if (status.currentProfile) {
     activeProfile = status.currentProfile;
   }
@@ -135,6 +137,9 @@ async function checkPing() {
     if (pingBadge) pingBadge.textContent = `${latency} ms`;
   } else {
     pingValue.textContent = 'Таймаут';
+    // Туннель поднят, а трафик не ходит — сам по себе "Таймаут" ничего не объясняет,
+    // поэтому показываем, куда смотреть: в лог sing-box с реальной причиной.
+    if (isConnected && logPath) statusSubtext.textContent = `Сервер не отвечает. Лог: ${logPath}`;
   }
 }
 

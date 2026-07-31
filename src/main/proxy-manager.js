@@ -8,8 +8,10 @@ class ProxyManager {
     this.appDir = appDir;
     this.binPath = path.join(binDir, 'sing-box.exe');
     // конфиг для sing-box нельзя писать в resources/app.asar (read-only архив) —
-    // пишем в userData, бинарь читает его по абсолютному пути
-    this.configPath = path.join(require('electron').app.getPath('userData'), 'current_config.json');
+    // пишем в appDir (userData), бинарь читает его по абсолютному пути
+    this.configPath = path.join(appDir, 'current_config.json');
+    // Лог sing-box на диск: без него на чужой машине "не работает" нечем объяснить
+    this.logPath = path.join(appDir, 'singbox.log');
     this.childProcess = null;
     this.isConnected = false;
     this.currentProfile = null;
@@ -30,8 +32,13 @@ class ProxyManager {
 
     this.currentProfile = profile;
     fs.writeFileSync(this.configPath, JSON.stringify(configObj, null, 2), 'utf-8');
+    // перезаписываем, а не дописываем: в логе всегда только последняя попытка
+    try { fs.writeFileSync(this.logPath, ''); } catch (e) { /* лог не критичен */ }
 
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let lastError = '';
+      let giveUp = null;
       try {
         console.log('Spawning sing-box process from:', this.binPath);
         this.childProcess = spawn(this.binPath, ['run', '-c', this.configPath], {
@@ -39,10 +46,10 @@ class ProxyManager {
           windowsHide: true
         });
 
-        let settled = false;
         const fail = (err) => {
           if (settled) return;
           settled = true;
+          clearTimeout(giveUp);
           this.isConnected = false;
           reject(err);
         };
@@ -50,9 +57,22 @@ class ProxyManager {
         const onLog = (data) => {
           const log = data.toString();
           console.log('[sing-box]', log);
+          try { fs.appendFileSync(this.logPath, log); } catch (e) { /* лог не критичен */ }
           // sing-box печатает FATAL и продолжает умирать асинхронно - без этого
           // старт "успешно" резолвился, а туннеля не было
-          if (/FATAL|panic:/.test(log)) fail(new Error(log.trim()));
+          if (/FATAL|panic:/.test(log)) { lastError = log.trim(); fail(new Error(lastError)); }
+          if (/ERROR/.test(log)) lastError = log.trim();
+          // Единственный честный признак готовности. Раньше тут стоял таймер на 2.5с:
+          // на медленной машине (установка драйвера wintun, создание TUN) он срабатывал
+          // раньше старта, приложение писало "подключено", а туннеля не было — и весь
+          // трафик, включая замер пинга, отваливался по таймауту.
+          if (/sing-box started/.test(log) && !settled) {
+            settled = true;
+            clearTimeout(giveUp);
+            this.isConnected = true;
+            // TUN инбаунд сам настраивает маршруты (auto_route), системный прокси не нужен
+            resolve({ success: true, profile: this.currentProfile });
+          }
         };
 
         this.childProcess.stdout.on('data', onLog);
@@ -68,17 +88,14 @@ class ProxyManager {
           this.isConnected = false;
           this.childProcess = null;
           // TUN автоматически очищает маршруты при остановке
-          fail(new Error(`sing-box exited with code ${code} (TUN требует прав администратора)`));
+          fail(new Error(lastError || `sing-box завершился с кодом ${code}. Лог: ${this.logPath}`));
         });
 
-        // Создание TUN-интерфейса на Windows занимает секунду-другую
-        setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          this.isConnected = true;
-          // TUN инбаунд сам настраивает маршруты (auto_route), системный прокси не нужен
-          resolve({ success: true, profile: this.currentProfile });
-        }, 2500);
+        // Установка драйвера wintun на чистой машине занимает до десятка секунд
+        giveUp = setTimeout(() => {
+          fail(new Error(`sing-box не запустился за 30 с. Лог: ${this.logPath}`));
+          this.stop();
+        }, 30000);
 
       } catch (err) {
         console.error('Failed to start proxy manager:', err);

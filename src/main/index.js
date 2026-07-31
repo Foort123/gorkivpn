@@ -255,6 +255,7 @@ app.whenReady().then(() => {
     return {
       isConnected: proxyManager ? proxyManager.isConnected : false,
       currentProfile: proxyManager ? proxyManager.currentProfile : null,
+      logPath: proxyManager ? proxyManager.logPath : null,
       localPort: 10808
     };
   });

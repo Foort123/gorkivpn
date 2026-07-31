@@ -72,10 +72,10 @@ async function generateSingBoxConfig(profile, excluded = []) {
       servers: [
         // DoT через прокси — весь DNS клиента после подключения
         { tag: "remote", type: "tls", server: "1.1.1.1", detour: "proxy" },
-        // Резолвер для домена самого VPN-сервера и direct-приложений.
-        // БЕЗ detour: в sing-box 1.13 detour:"direct" на UDP DNS → FATAL.
-        // При инициализации outbound'ов (до старта TUN) этот сервер работает напрямую.
-        { tag: "local", type: "udp", server: "8.8.8.8" }
+        // Резолвер для домена самого VPN-сервера и direct-приложений — системный.
+        // Хардкод udp 8.8.8.8 сюда не годится: у многих провайдеров UDP:53 наружу
+        // блокируется, домен VPN-сервера не резолвится и туннель не поднимается вовсе.
+        { tag: "local", type: "local" }
       ],
       rules: [
         // домен VPN-сервера резолвим локально (нужен до установки туннеля)
