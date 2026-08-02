@@ -1,3 +1,6 @@
+const net = require('net');
+const dns = require('dns').promises;
+
 /**
  * Parses an ss:// URI or raw object into standard proxy options
  */
@@ -63,6 +66,17 @@ async function generateSingBoxConfig(profile, excluded = []) {
 
   const bypass = excluded.filter(e => e && e.exe).map(e => e.exe);
 
+  // Собственные соединения sing-box к SS-серверу нельзя пускать обратно в туннель.
+  // На Wi-Fi auto_detect_interface этого не обеспечивает: пакеты уходят с LAN-адреса,
+  // всё равно затягиваются в TUN и проксируются снова — петля выжирает эфемерные порты
+  // (в логе с чужой машины: 671k строк и "Only one usage of each socket address" за 57 с).
+  let serverIps = [];
+  try {
+    serverIps = net.isIP(server) ? [server] : await dns.resolve4(server);
+  } catch (e) {
+    console.error('Не удалось резолвить адрес сервера для direct-правила:', e.message);
+  }
+
   return {
     log: {
       level: "info",
@@ -122,6 +136,8 @@ async function generateSingBoxConfig(profile, excluded = []) {
       default_domain_resolver: { server: "local", strategy: "ipv4_only" },
       final: "proxy",
       rules: [
+        // первым: трафик к самому SS-серверу всегда мимо туннеля, иначе петля
+        ...(serverIps.length ? [{ ip_cidr: serverIps, outbound: "direct" }] : []),
         { port: 53, action: "hijack-dns" },
         { ip_is_private: true, outbound: "direct" },
         // split tunneling: приложение целиком идёт напрямую, минуя туннель

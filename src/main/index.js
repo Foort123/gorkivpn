@@ -185,6 +185,13 @@ app.whenReady().then(() => {
   // cwd для sing-box — просто нужна любая реальная папка на диске
   const appDir = app.getPath('userData');
 
+  // Сироты от прошлого жёсткого закрытия держат порт 9090 и TUN-адаптер.
+  // Зачистка по имени безопасна только здесь, до первого спавна: в stop() она убивала
+  // свежий процесс, поднятый следом за перезапуском из-за исключений.
+  try {
+    execSync('taskkill /F /IM sing-box.exe', { stdio: 'ignore', windowsHide: true });
+  } catch (e) { /* нечего убивать - нормальный случай */ }
+
   proxyManager = new ProxyManager(appDir, binDir);
 
   createWindow();

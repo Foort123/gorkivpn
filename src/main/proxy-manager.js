@@ -18,6 +18,7 @@ class ProxyManager {
     this.localPort = 10808;
     this.bytesUploaded = 0;
     this.bytesDownloaded = 0;
+    this.logBytes = 0;
   }
 
   setSystemProxy(enable, port = 10808) {
@@ -34,6 +35,7 @@ class ProxyManager {
     fs.writeFileSync(this.configPath, JSON.stringify(configObj, null, 2), 'utf-8');
     // перезаписываем, а не дописываем: в логе всегда только последняя попытка
     try { fs.writeFileSync(this.logPath, ''); } catch (e) { /* лог не критичен */ }
+    this.logBytes = 0;
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -57,7 +59,15 @@ class ProxyManager {
         const onLog = (data) => {
           const log = data.toString();
           console.log('[sing-box]', log);
-          try { fs.appendFileSync(this.logPath, log); } catch (e) { /* лог не критичен */ }
+          // ponytail: жёсткий потолок 5 МБ без ротации — лог и так перезаписывается при старте.
+          // appendFileSync синхронный и живёт в main-процессе: при петле маршрутизации
+          // это 91 МБ за минуту и намертво залипший UI.
+          if (this.logBytes < 5 * 1024 * 1024) {
+            try {
+              fs.appendFileSync(this.logPath, log);
+              this.logBytes += Buffer.byteLength(log);
+            } catch (e) { /* лог не критичен */ }
+          }
           // sing-box печатает FATAL и продолжает умирать асинхронно - без этого
           // старт "успешно" резолвился, а туннеля не было
           if (/FATAL|panic:/.test(log)) { lastError = log.trim(); fail(new Error(lastError)); }
@@ -111,15 +121,20 @@ class ProxyManager {
     if (!child) return { success: true };
     this.childProcess = null;
 
-    // Ждём реального выхода: иначе реконнект упрётся в ещё живой TUN-адаптер и порт 9090
+    // Ждём реального выхода: иначе реконнект упрётся в ещё живой TUN-адаптер и порт 9090.
+    // Подстраховка бьёт по PID и снимается при штатном выходе — раньше она висела в очереди
+    // и через секунду убивала по имени уже НОВЫЙ sing-box, поднятый применением исключений.
     await new Promise((resolve) => {
-      child.once('exit', resolve);
+      const fallback = setTimeout(
+        () => exec(`taskkill /F /T /PID ${child.pid}`, () => resolve()),
+        1000
+      );
+      child.once('exit', () => { clearTimeout(fallback); resolve(); });
       try {
         child.kill('SIGKILL');
       } catch (e) {
         console.error('Error killing child process:', e);
       }
-      setTimeout(() => exec('taskkill /F /IM sing-box.exe', () => resolve()), 1000);
     });
 
     return { success: true };
