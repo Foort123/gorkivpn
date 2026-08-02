@@ -111,6 +111,11 @@ async function generateSingBoxConfig(profile, excluded = []) {
         // strict_route: false — если SS сервер недоступен, трафик идёт напрямую
         // (с true весь интернет ломается при любой проблеме с SS)
         strict_route: false,
+        // Адрес SS-сервера вообще не должен попадать в маршруты TUN. Одного route-правила
+        // "ip_cidr -> direct" мало: пакет уже внутри туннеля, direct отправляет его снова,
+        // он снова перехватывается — петля остаётся, только без прокси. На машине с другими
+        // TUN-адаптерами (Tailscale, Radmin VPN) auto_detect_interface от этого не спасает.
+        ...(serverIps.length ? { route_exclude_address: serverIps.map(ip => `${ip}/32`) } : {}),
         // mixed: TCP через system-стек (стабильнее на Windows), UDP через gvisor
         stack: "mixed"
       }
