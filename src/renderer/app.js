@@ -1,4 +1,38 @@
 const { ipcRenderer } = require('electron');
+const crypto = require('crypto');
+
+// SHA-256 пароля вместо самого пароля. Настоящей защиты это не даёт — код клиента
+// распаковывается из app.asar, — но и читать пароль глазами в исходниках не приходится.
+const PASSWORD_HASH = 'bad7ef7aa34ffc1f09a0b3687626f85d5efd89f9efe1f530dff970d007f8b7aa';
+const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+// Замок: спрашиваем пароль один раз на устройство. Флаг живёт в localStorage,
+// то есть в профиле Electron рядом с профилями VPN.
+const lockOverlay = document.getElementById('lockOverlay');
+const lockInput = document.getElementById('lockInput');
+const lockError = document.getElementById('lockError');
+const lockBtn = document.getElementById('lockBtn');
+
+if (localStorage.getItem('unlocked') !== '1') {
+  lockOverlay.classList.remove('hidden');
+  lockInput.focus();
+}
+
+function tryUnlock() {
+  if (sha256(lockInput.value.trim()) === PASSWORD_HASH) {
+    localStorage.setItem('unlocked', '1');
+    lockOverlay.classList.add('hidden');
+  } else {
+    lockError.classList.remove('hidden');
+    lockInput.select();
+  }
+}
+
+lockBtn.addEventListener('click', tryUnlock);
+lockInput.addEventListener('input', () => lockError.classList.add('hidden'));
+lockInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') tryUnlock();
+});
 
 // DOM Elements
 const connectBtn = document.getElementById('connectBtn');

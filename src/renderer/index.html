@@ -8,6 +8,18 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
+  <!-- Замок: пароль спрашивается один раз на устройство -->
+  <div id="lockOverlay" class="lock-overlay hidden">
+    <div class="lock-card">
+      <img src="logo.png" alt="GORKIVPN" class="lock-logo">
+      <span class="brand-title">GORKI<span class="brand-accent">VPN</span></span>
+      <p class="lock-hint">Введите пароль доступа. Спросим один раз — дальше вход свободный.</p>
+      <input type="password" id="lockInput" placeholder="Пароль" autocomplete="off">
+      <div id="lockError" class="lock-error hidden">Неверный пароль</div>
+      <button id="lockBtn" class="submit-btn">Войти</button>
+    </div>
+  </div>
+
   <div class="app-container">
 
     <!-- Header -->
