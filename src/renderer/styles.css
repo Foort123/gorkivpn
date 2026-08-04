@@ -647,6 +647,12 @@ textarea {
   color: #f87171;
 }
 
+/* Общий .hidden. Раньше был только .modal-overlay.hidden, поэтому замок и
+   текст ошибки не прятались вообще. */
+.hidden {
+  display: none !important;
+}
+
 /* Тонкие скроллбары только внутри списков - общего ползунка у окна нет */
 .profile-list::-webkit-scrollbar,
 .proc-list::-webkit-scrollbar {
