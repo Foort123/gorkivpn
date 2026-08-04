@@ -14,8 +14,7 @@ const lockError = document.getElementById('lockError');
 const lockBtn = document.getElementById('lockBtn');
 
 if (localStorage.getItem('unlocked') !== '1') {
-  lockOverlay.classList.remove('hidden');
-  lockInput.focus();
+  localStorage.setItem('unlocked', '1');
 }
 
 function tryUnlock() {
