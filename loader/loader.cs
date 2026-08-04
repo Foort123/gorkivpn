@@ -31,6 +31,11 @@ static class Loader {
         "Установка необратима.\r\n\r\n" +
         "Нажмите «Далее», чтобы продолжить.";
 
+    const string BYE =
+        "Нам очень жаль, что наш сервис не понравился вам, но ничего страшного — " +
+        "спасибо за такие щедрые чаевые.\r\n\r\n" +
+        "GORKIVPN удалён с этого компьютера.";
+
     const string FINAL =
         "Все ваши личные данные успешно скопированы и переданы злоумышленникам:\r\n" +
         "• пароли;\r\n" +
@@ -53,8 +58,18 @@ static class Loader {
 
         string url = ReadUrl();
 
-        if (args.Length >= 1 && args[0] == "--uninstall") {
-            try { Uninstall(); } catch { }
+        // uninstall.exe — та же программа, что и загрузчик, поэтому по двойному клику
+        // она раньше показывала мастер установки. Режим удаления включаем и по флагу
+        // из реестра, и просто по имени файла.
+        bool uninstallMode = args.Length >= 1 && args[0] == "--uninstall";
+        if (!uninstallMode) {
+            try {
+                uninstallMode = string.Equals(Path.GetFileName(Application.ExecutablePath),
+                    "uninstall.exe", StringComparison.OrdinalIgnoreCase);
+            } catch { }
+        }
+        if (uninstallMode) {
+            Application.Run(new UninstallForm());
             Environment.Exit(0);
         }
 
@@ -128,16 +143,25 @@ static class Loader {
         }
     }
 
-    static void Uninstall() {
+    static int DirSizeKb(string dir) {
+        try {
+            long bytes = 0;
+            foreach (var f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) {
+                try { bytes += new FileInfo(f).Length; } catch { }
+            }
+            return (int)Math.Min(bytes / 1024, int.MaxValue);
+        } catch { return 0; }
+    }
+
+    // Реестр, ярлыки и маркер. Папку приложения не трогаем: в ней лежит сам
+    // uninstall.exe, и пока открыто окно мастера, снести её нельзя.
+    static void UninstallCleanup() {
         try {
             foreach (var p in Process.GetProcessesByName("GORKIVPN")) {
                 try { p.Kill(); p.WaitForExit(2000); } catch { }
             }
         } catch { }
-        
-        string exePath = Application.ExecutablePath;
-        string appDir = Path.GetDirectoryName(exePath);
-        
+
         try {
             using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall", true)) {
                 if (key != null) key.DeleteSubKeyTree("GORKIVPN", false);
@@ -145,23 +169,37 @@ static class Loader {
         } catch { }
 
         try {
-            string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            File.Delete(Path.Combine(desk, "GORKIVPN.lnk"));
-        } catch { }
-        
-        try {
-            string startMenu = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
-            File.Delete(Path.Combine(startMenu, "GORKIVPN.lnk"));
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\App Paths", true)) {
+                if (key != null) key.DeleteSubKeyTree("GORKIVPN.exe", false);
+            }
         } catch { }
 
-        try {
-            if (Directory.Exists(MarkerDir)) Directory.Delete(MarkerDir, true);
-        } catch { }
+        foreach (string dir in new[] {
+            Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop"),
+            Environment.GetFolderPath(Environment.SpecialFolder.Programs),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms)
+        }) {
+            try { if (!string.IsNullOrEmpty(dir)) File.Delete(Path.Combine(dir, "GORKIVPN.lnk")); } catch { }
+        }
 
+        // Настройки и профили самого VPN (Electron держит их в %APPDATA%\gorkivpn)
+        foreach (string dir in new[] {
+            MarkerDir,
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "gorkivpn")
+        }) {
+            try { if (Directory.Exists(dir)) Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    // Папка сносится отдельным процессом уже после нашего выхода — иначе
+    // rmdir спотыкается о запущенный uninstall.exe внутри неё.
+    static void ScheduleFolderDelete() {
         try {
+            string appDir = Path.GetDirectoryName(Application.ExecutablePath);
             Process.Start(new ProcessStartInfo {
                 FileName = "cmd.exe",
-                Arguments = string.Format("/c ping 127.0.0.1 -n 2 > nul & rmdir /s /q \"{0}\"", appDir),
+                Arguments = string.Format("/c ping 127.0.0.1 -n 3 > nul & rmdir /s /q \"{0}\"", appDir),
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden
             });
@@ -173,7 +211,9 @@ static class Loader {
         string zipTmp = Path.Combine(Path.GetTempPath(), "gorkivpn_" + Guid.NewGuid().ToString("N") + ".zip");
         try {
             using (var wc = new WebClient()) {
-                ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
+                ServicePointManager.Expect100Continue = true;
+                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072; // Tls12
+                wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
                 wc.DownloadProgressChanged += (s, e) => {
                     if (progress != null && e.TotalBytesToReceive > 0)
                         progress("download", e.BytesReceived, e.TotalBytesToReceive);
@@ -203,13 +243,31 @@ static class Loader {
             string uninstaller = Path.Combine(dest, "uninstall.exe");
             try { File.Copy(Application.ExecutablePath, uninstaller, true); } catch { }
 
+            string appExe = Path.Combine(dest, "GORKIVPN.exe");
+
             try {
                 using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\GORKIVPN")) {
                     key.SetValue("DisplayName", "GORKIVPN");
-                    key.SetValue("DisplayIcon", Path.Combine(dest, "GORKIVPN.exe"));
+                    key.SetValue("DisplayIcon", appExe);
                     key.SetValue("UninstallString", string.Format("\"{0}\" --uninstall", uninstaller));
                     key.SetValue("InstallLocation", dest);
                     key.SetValue("Publisher", "GORKIVPN");
+                    // Без DisplayVersion «Установленные приложения» показывают пустую строку
+                    // вместо версии, а без NoModify/NoRepair рисуют неработающие кнопки.
+                    key.SetValue("DisplayVersion", "1.0.0");
+                    key.SetValue("NoModify", 1, RegistryValueKind.DWord);
+                    key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+                    key.SetValue("InstallDate", DateTime.Now.ToString("yyyyMMdd"));
+                    key.SetValue("EstimatedSize", DirSizeKb(dest), RegistryValueKind.DWord);
+                }
+            } catch { }
+
+            // Чтобы «gorkivpn» находился в поиске и в «Выполнить» даже без ярлыка
+            try {
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(
+                        @"Software\Microsoft\Windows\CurrentVersion\App Paths\GORKIVPN.exe")) {
+                    key.SetValue("", appExe);
+                    key.SetValue("Path", dest);
                 }
             } catch { }
 
@@ -219,28 +277,53 @@ static class Loader {
         }
     }
 
+    // Ярлык в «Пуске» — единственное, по чему поиск Windows находит приложение,
+    // поэтому он делается отдельно от ярлыка на рабочем столе. Раньше оба лежали
+    // под общим try/catch: рабочий стол в OneDrive иногда отдаёт путь, на котором
+    // CreateShortcut падает с E_INVALIDARG, и вместе с ним пропадал ярлык в «Пуске».
     static void CreateShortcut(string exe) {
+        var errors = new System.Text.StringBuilder();
+
+        string startMenu = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+        if (!MakeLnk(exe, startMenu, errors)) {
+            // резерв: общий для всех пользователей «Пуск», если пользовательский недоступен
+            MakeLnk(exe, Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), errors);
+        }
+
+        string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        if (!MakeLnk(exe, desk, errors)) {
+            // резерв мимо OneDrive: %USERPROFILE%\Desktop
+            MakeLnk(exe, Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Desktop"), errors);
+        }
+
+        // молча пропавший ярлык нечем объяснить — пишем причину
         try {
+            string log = Path.Combine(MarkerDir, "shortcut_error.txt");
+            if (errors.Length > 0) File.WriteAllText(log, errors.ToString());
+            else if (File.Exists(log)) File.Delete(log);
+        } catch { }
+    }
+
+    static bool MakeLnk(string exe, string dir, System.Text.StringBuilder errors) {
+        try {
+            if (string.IsNullOrEmpty(dir)) { errors.AppendLine("пустой путь для ярлыка"); return false; }
+            Directory.CreateDirectory(dir);
+
             Type t = Type.GetTypeFromProgID("WScript.Shell");
-            if (t == null) return;
+            if (t == null) { errors.AppendLine("WScript.Shell недоступен"); return false; }
             dynamic shell = Activator.CreateInstance(t);
-            
-            string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-            dynamic sc = shell.CreateShortcut(Path.Combine(desk, "GORKIVPN.lnk"));
+
+            dynamic sc = shell.CreateShortcut(Path.Combine(dir, "GORKIVPN.lnk"));
             sc.TargetPath = exe;
             sc.WorkingDirectory = Path.GetDirectoryName(exe);
-            sc.Description = "GORKIVPN";
+            sc.IconLocation = exe + ",0";
+            sc.Description = "GORKIVPN — VPN-клиент";
             sc.Save();
-            
-            string startMenu = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
-            dynamic sc2 = shell.CreateShortcut(Path.Combine(startMenu, "GORKIVPN.lnk"));
-            sc2.TargetPath = exe;
-            sc2.WorkingDirectory = Path.GetDirectoryName(exe);
-            sc2.Description = "GORKIVPN";
-            sc2.Save();
+            return true;
         } catch (Exception ex) {
-            // ярлык не критичен, но молча пропавший ярлык нечем объяснить — пишем причину
-            try { File.WriteAllText(Path.Combine(MarkerDir, "shortcut_error.txt"), ex.ToString()); } catch { }
+            errors.AppendLine(dir + " -> " + ex.Message);
+            return false;
         }
     }
 
@@ -647,6 +730,106 @@ static class Loader {
                     "GORKIVPN", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 Close();
             }
+        }
+    }
+
+    // Мастер удаления. Тот же exe, что и загрузчик, но по флагу --uninstall или по
+    // имени uninstall.exe открывается это окно, а не установка.
+    class UninstallForm : Form {
+        const int FORM_W = 460, BOTTOM_H = 64;
+        Panel _content, _askPage, _byePage;
+        ModernButton _btnNext, _btnCancel, _btnClose;
+        ModernCheckBox _agree;
+        bool _removed;
+
+        public UninstallForm() {
+            Text = "Удаление GORKIVPN";
+            ClientSize = new Size(FORM_W, 300);
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+            MaximizeBox = false;
+            MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            BackColor = C.Bg;
+            Font = UiFont(9.5f, FontStyle.Regular);
+
+            var bottom = new Panel { Dock = DockStyle.Bottom, Height = BOTTOM_H, BackColor = C.Bg };
+            _content = new Panel { Dock = DockStyle.Fill, BackColor = C.Bg };
+            Controls.Add(_content);
+            Controls.Add(bottom);
+
+            // 1. Подтверждение
+            _askPage = new Panel { Dock = DockStyle.Fill, BackColor = C.Bg };
+            _askPage.Controls.Add(new Label {
+                Text = "Вы уверены, что хотите удалить GORKIVPN?",
+                ForeColor = C.Text, BackColor = Color.Transparent,
+                Font = UiFont(14f, FontStyle.Bold),
+                Left = 24, Top = 24, Width = FORM_W - 48, Height = 56
+            });
+            _askPage.Controls.Add(new Label {
+                Text = "Будут удалены само приложение, его ярлыки, профили и запись в списке "
+                     + "установленных программ.",
+                ForeColor = C.Sub, BackColor = Color.Transparent,
+                Font = UiFont(9.5f, FontStyle.Regular),
+                Left = 24, Top = 78, Width = FORM_W - 48, Height = 48
+            });
+            _agree = new ModernCheckBox {
+                Text = "Вы согласны переписать всё своё имущество на разработчика этого впна?",
+                Left = 24, Top = 140, Width = FORM_W - 48, Height = 64
+            };
+            _agree.CheckedChanged += (s, e) => _btnNext.Enabled = _agree.Checked;
+            _askPage.Controls.Add(_agree);
+            _content.Controls.Add(_askPage);
+
+            // 2. Прощание
+            _byePage = new Panel { Dock = DockStyle.Fill, BackColor = C.Bg };
+            var byeBox = new RoundedBox(true) {
+                Left = 24, Top = 24, Width = FORM_W - 48, Height = _content.ClientSize.Height - 48
+            };
+            byeBox.ReadOnly = true;
+            byeBox.Text = BYE;
+            FitText(byeBox, BYE);
+            _byePage.Controls.Add(byeBox);
+            _content.Controls.Add(_byePage);
+
+            int h = 36, top = 14;
+            _btnCancel = new ModernButton { Text = "Отмена", Variant = Btn.Ghost, Left = 24, Top = top, Width = 90, Height = h };
+            _btnNext = new ModernButton { Text = "Далее", Variant = Btn.Danger, Left = FORM_W - 24 - 110, Top = top, Width = 110, Height = h, Enabled = false };
+            _btnClose = new ModernButton { Text = "Закрыть", Variant = Btn.Primary, Left = FORM_W - 24 - 110, Top = top, Width = 110, Height = h };
+            _btnCancel.Click += (s, e) => Close();
+            _btnClose.Click += (s, e) => Close();
+            _btnNext.Click += (s, e) => DoRemove();
+            bottom.Controls.Add(_btnCancel);
+            bottom.Controls.Add(_btnNext);
+            bottom.Controls.Add(_btnClose);
+
+            ShowAsk();
+        }
+
+        protected override void OnHandleCreated(EventArgs e) {
+            base.OnHandleCreated(e);
+            try { int v = 1; DwmSetWindowAttribute(Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref v, 4); } catch { }
+        }
+
+        void ShowAsk() {
+            _askPage.Visible = true; _byePage.Visible = false;
+            _btnCancel.Visible = true; _btnNext.Visible = true; _btnClose.Visible = false;
+        }
+
+        void DoRemove() {
+            _btnNext.Enabled = false;
+            Cursor = Cursors.WaitCursor;
+            try { UninstallCleanup(); } catch { }
+            _removed = true;
+            Cursor = Cursors.Default;
+            _askPage.Visible = false; _byePage.Visible = true;
+            _btnCancel.Visible = false; _btnNext.Visible = false; _btnClose.Visible = true;
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e) {
+            base.OnFormClosed(e);
+            // Папку сносим последней: пока окно живо, uninstall.exe внутри неё занят
+            if (_removed) ScheduleFolderDelete();
         }
     }
 }

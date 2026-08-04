@@ -425,5 +425,9 @@ ipcRenderer.on('status-changed', (event, data) => {
   updateUIState();
 });
 
+// Переключение из трея: жмём ту же кнопку, что и мышью в окне, чтобы не
+// заводить вторую копию логики подключения.
+ipcRenderer.on('tray-toggle', () => connectBtn.click());
+
 // Run Init
 init();

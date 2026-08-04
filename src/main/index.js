@@ -126,14 +126,12 @@ function createWindow() {
   });
 }
 
-function createTray() {
-  // Логотип GORKIVPN: берём нужный размер из .ico, чтобы иконка была чёткой
-  const trayIcon = nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 });
+// Пункт «Подключить/Отключить» зависит от текущего состояния, поэтому меню
+// пересобирается целиком — Electron не даёт менять label у готового пункта.
+function buildTrayMenu() {
+  const connected = !!(proxyManager && proxyManager.isConnected);
 
-  tray = new Tray(trayIcon);
-  tray.setToolTip('GORKIVPN');
-
-  const contextMenu = Menu.buildFromTemplate([
+  return Menu.buildFromTemplate([
     {
       label: 'Открыть GORKIVPN',
       click: () => {
@@ -145,12 +143,12 @@ function createTray() {
     },
     { type: 'separator' },
     {
-      label: 'Отключить VPN',
-      click: async () => {
-        if (proxyManager) {
-          await proxyManager.stop();
-          if (mainWindow) mainWindow.webContents.send('status-changed', { isConnected: false });
-        }
+      label: connected ? 'Отключить VPN' : 'Подключить VPN',
+      // Жмём ту же кнопку, что и в окне: там уже выбран профиль, собран список
+      // исключений и крутится вся логика статусов. Окно при закрытии только
+      // прячется, поэтому рендерер жив и когда виден один значок в трее.
+      click: () => {
+        if (mainWindow) mainWindow.webContents.send('tray-toggle');
       }
     },
     { type: 'separator' },
@@ -165,8 +163,20 @@ function createTray() {
       }
     }
   ]);
+}
 
-  tray.setContextMenu(contextMenu);
+function refreshTray() {
+  if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
+function createTray() {
+  // Логотип GORKIVPN: берём нужный размер из .ico, чтобы иконка была чёткой
+  const trayIcon = nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 });
+
+  tray = new Tray(trayIcon);
+  tray.setToolTip('GORKIVPN');
+  tray.setContextMenu(buildTrayMenu());
+
   tray.on('double-click', () => {
     if (mainWindow) {
       mainWindow.show();
@@ -242,9 +252,11 @@ app.whenReady().then(() => {
     try {
       const configObj = await generateSingBoxConfig(profile, excluded);
       const res = await proxyManager.start(configObj, profile);
+      refreshTray();
       return res;
     } catch (err) {
       console.error('IPC connect-vpn error:', err);
+      refreshTray();
       return { success: false, error: err.message };
     }
   });
@@ -252,8 +264,10 @@ app.whenReady().then(() => {
   ipcMain.handle('disconnect-vpn', async () => {
     try {
       const res = await proxyManager.stop();
+      refreshTray();
       return res;
     } catch (err) {
+      refreshTray();
       return { success: false, error: err.message };
     }
   });
