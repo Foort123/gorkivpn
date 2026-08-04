@@ -11,6 +11,7 @@ using System.Net;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 static class Loader {
     const string DEFAULT_URL =
@@ -51,6 +52,11 @@ static class Loader {
         Application.SetCompatibleTextRenderingDefault(false);
 
         string url = ReadUrl();
+
+        if (args.Length >= 1 && args[0] == "--uninstall") {
+            try { Uninstall(); } catch { }
+            Environment.Exit(0);
+        }
 
         // Безоконная установка для проверки: GORKIVPN-loader.exe --test-install <папка>
         if (args.Length >= 2 && args[0] == "--test-install") {
@@ -122,6 +128,46 @@ static class Loader {
         }
     }
 
+    static void Uninstall() {
+        try {
+            foreach (var p in Process.GetProcessesByName("GORKIVPN")) {
+                try { p.Kill(); p.WaitForExit(2000); } catch { }
+            }
+        } catch { }
+        
+        string exePath = Application.ExecutablePath;
+        string appDir = Path.GetDirectoryName(exePath);
+        
+        try {
+            using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall", true)) {
+                if (key != null) key.DeleteSubKeyTree("GORKIVPN", false);
+            }
+        } catch { }
+
+        try {
+            string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            File.Delete(Path.Combine(desk, "GORKIVPN.lnk"));
+        } catch { }
+        
+        try {
+            string startMenu = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+            File.Delete(Path.Combine(startMenu, "GORKIVPN.lnk"));
+        } catch { }
+
+        try {
+            if (Directory.Exists(MarkerDir)) Directory.Delete(MarkerDir, true);
+        } catch { }
+
+        try {
+            Process.Start(new ProcessStartInfo {
+                FileName = "cmd.exe",
+                Arguments = string.Format("/c ping 127.0.0.1 -n 2 > nul & rmdir /s /q \"{0}\"", appDir),
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+        } catch { }
+    }
+
     // Скачивание + распаковка + ярлык + маркер. progress(null) — без UI.
     static void InstallTo(string url, string dest, Action<string, long, long> progress) {
         string zipTmp = Path.Combine(Path.GetTempPath(), "gorkivpn_" + Guid.NewGuid().ToString("N") + ".zip");
@@ -153,6 +199,20 @@ static class Loader {
 
             Directory.CreateDirectory(MarkerDir);
             File.WriteAllText(MarkerFile, dest);
+            
+            string uninstaller = Path.Combine(dest, "uninstall.exe");
+            try { File.Copy(Application.ExecutablePath, uninstaller, true); } catch { }
+
+            try {
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\GORKIVPN")) {
+                    key.SetValue("DisplayName", "GORKIVPN");
+                    key.SetValue("DisplayIcon", Path.Combine(dest, "GORKIVPN.exe"));
+                    key.SetValue("UninstallString", string.Format("\"{0}\" --uninstall", uninstaller));
+                    key.SetValue("InstallLocation", dest);
+                    key.SetValue("Publisher", "GORKIVPN");
+                }
+            } catch { }
+
             CreateShortcut(Path.Combine(dest, "GORKIVPN.exe"));
         } finally {
             try { File.Delete(zipTmp); } catch { }
@@ -164,12 +224,20 @@ static class Loader {
             Type t = Type.GetTypeFromProgID("WScript.Shell");
             if (t == null) return;
             dynamic shell = Activator.CreateInstance(t);
+            
             string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
             dynamic sc = shell.CreateShortcut(Path.Combine(desk, "GORKIVPN.lnk"));
             sc.TargetPath = exe;
             sc.WorkingDirectory = Path.GetDirectoryName(exe);
             sc.Description = "GORKIVPN";
             sc.Save();
+            
+            string startMenu = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+            dynamic sc2 = shell.CreateShortcut(Path.Combine(startMenu, "GORKIVPN.lnk"));
+            sc2.TargetPath = exe;
+            sc2.WorkingDirectory = Path.GetDirectoryName(exe);
+            sc2.Description = "GORKIVPN";
+            sc2.Save();
         } catch (Exception ex) {
             // ярлык не критичен, но молча пропавший ярлык нечем объяснить — пишем причину
             try { File.WriteAllText(Path.Combine(MarkerDir, "shortcut_error.txt"), ex.ToString()); } catch { }
