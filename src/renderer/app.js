@@ -3,7 +3,7 @@ const crypto = require('crypto');
 
 // SHA-256 пароля вместо самого пароля. Настоящей защиты это не даёт — код клиента
 // распаковывается из app.asar, — но и читать пароль глазами в исходниках не приходится.
-const PASSWORD_HASH = 'bad7ef7aa34ffc1f09a0b3687626f85d5efd89f9efe1f530dff970d007f8b7aa';
+const PASSWORD_HASH = 'c3198dd7f993d0e7eca09c9b361e5536a11c3eba55074ded531926747c5baf8b';
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 // Замок: спрашиваем пароль один раз на устройство. Флаг живёт в localStorage,
@@ -13,13 +13,14 @@ const lockInput = document.getElementById('lockInput');
 const lockError = document.getElementById('lockError');
 const lockBtn = document.getElementById('lockBtn');
 
-if (localStorage.getItem('unlocked') !== '1') {
-  localStorage.setItem('unlocked', '1');
+if (localStorage.getItem('unlocked_v2') !== '1') {
+  lockOverlay.classList.remove('hidden');
+  lockInput.focus();
 }
 
 function tryUnlock() {
   if (sha256(lockInput.value.trim()) === PASSWORD_HASH) {
-    localStorage.setItem('unlocked', '1');
+    localStorage.setItem('unlocked_v2', '1');
     lockOverlay.classList.add('hidden');
   } else {
     lockError.classList.remove('hidden');
