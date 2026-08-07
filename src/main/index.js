@@ -72,12 +72,17 @@ function loadProfiles() {
     if (fs.existsSync(profilesFilePath)) {
       const data = JSON.parse(fs.readFileSync(profilesFilePath, 'utf-8'));
       if (Array.isArray(data) && data.length > 0) {
+        let changed = false;
         data.forEach(p => {
           if (p.isDefault || p.server === 'vpn-production-9f65.up.railway.app' || p.server === 'trolley.proxy.rlwy.net' || p.server === 'sakura.proxy.rlwy.net') {
             p.server = 'hayabusa.proxy.rlwy.net';
             p.port = 43081;
+            changed = true;
           }
         });
+        if (changed) {
+          saveProfiles(data);
+        }
         return data;
       }
     }

@@ -79,7 +79,7 @@ async function generateSingBoxConfig(profile, excluded = []) {
 
   return {
     log: {
-      level: "info",
+      level: "trace",
       timestamp: true
     },
     dns: {

@@ -2,7 +2,7 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 const config = {
-    log: { level: "info" },
+    log: { level: "trace" },
     inbounds: [{ type: "mixed", tag: "mixed-in", listen: "127.0.0.1", listen_port: 10808 }],
     outbounds: [
         { type: "shadowsocks", tag: "proxy", server: "hayabusa.proxy.rlwy.net", server_port: 43081, method: "aes-256-gcm", password: "gR45-lDTr-9oPq-zXlc" },
