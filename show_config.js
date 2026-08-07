@@ -2,8 +2,8 @@ const { generateSingBoxConfig } = require('./src/main/config-parser');
 
 (async () => {
     const config = await generateSingBoxConfig({
-        server: 'trolley.proxy.rlwy.net',
-        port: 26350,
+        server: 'hayabusa.proxy.rlwy.net',
+        port: 43081,
         cipher: 'aes-256-gcm',
         password: 'gR45-lDTr-9oPq-zXlc'
     });

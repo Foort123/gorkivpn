@@ -6,7 +6,7 @@ const assert = require('assert');
 const { generateSingBoxConfig } = require('./src/main/config-parser');
 
 (async () => {
-  const cfg = await generateSingBoxConfig({ server: '203.0.113.7', port: 26350 }, []);
+  const cfg = await generateSingBoxConfig({ server: '203.0.113.7', port: 43081 }, []);
 
   // главное: адрес сервера исключён из маршрутов TUN, пакет туда физически не попадает
   assert.deepStrictEqual(cfg.inbounds[0].route_exclude_address, ['203.0.113.7/32'],

@@ -59,8 +59,8 @@ function parseSSUrl(ssUrl) {
  * @param {{exe: string}[]} excluded - приложения, которые целиком идут мимо VPN
  */
 async function generateSingBoxConfig(profile, excluded = []) {
-  const server = profile.server || 'sakura.proxy.rlwy.net';
-  const port = parseInt(profile.port || 31165, 10);
+  const server = profile.server || 'hayabusa.proxy.rlwy.net';
+  const port = parseInt(profile.port || 43081, 10);
   const cipher = profile.cipher || 'aes-256-gcm';
   const password = profile.password || 'gR45-lDTr-9oPq-zXlc';
 

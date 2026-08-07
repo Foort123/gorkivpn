@@ -1,4 +1,4 @@
-﻿# GORKIVPN: сбор диагностики с чужой машины в один файл.
+# GORKIVPN: сбор диагностики с чужой машины в один файл.
 # Запуск (обычный PowerShell, права админа не нужны):
 #   powershell -ExecutionPolicy Bypass -File collect-diag.ps1
 # Результат: на Рабочем столе gorkivpn-diag.txt — его и прислать.
@@ -87,7 +87,7 @@ Add ((Get-NetIPConfiguration | Where-Object { $_.NetProfile } |
       Select-Object InterfaceAlias, @{n='IPv4';e={$_.IPv4Address.IPAddress}},
                     @{n='GW';e={$_.IPv4DefaultGateway.NextHop}} |
       Format-Table -AutoSize | Out-String))
-Add "TCP до trolley.proxy.rlwy.net:26350 : $((Test-NetConnection trolley.proxy.rlwy.net -Port 26350 -WarningAction SilentlyContinue).TcpTestSucceeded)"
+Add "TCP до hayabusa.proxy.rlwy.net:43081 : $((Test-NetConnection hayabusa.proxy.rlwy.net -Port 43081 -WarningAction SilentlyContinue).TcpTestSucceeded)"
 
 Add ''
 Add '--- процессы ---'

@@ -13,8 +13,8 @@ const configObj = {
     outbounds: [{
         type: 'shadowsocks',
         tag: 'proxy',
-        server: 'trolley.proxy.rlwy.net',
-        server_port: 26350,
+        server: 'hayabusa.proxy.rlwy.net',
+        server_port: 43081,
         method: 'aes-256-gcm',
         password: 'gR45-lDTr-9oPq-zXlc'
     }, {
