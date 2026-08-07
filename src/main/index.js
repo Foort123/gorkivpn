@@ -60,8 +60,8 @@ const profilesFilePath = path.join(app.getPath('userData'), 'vpn_profiles.json')
 const defaultProfile = {
   id: 'railway-default-1',
   name: 'GORKIVPN',
-  server: 'trolley.proxy.rlwy.net',
-  port: 26350,
+  server: 'sakura.proxy.rlwy.net',
+  port: 31165,
   cipher: 'aes-256-gcm',
   password: 'gR45-lDTr-9oPq-zXlc',
   isDefault: true
@@ -73,9 +73,9 @@ function loadProfiles() {
       const data = JSON.parse(fs.readFileSync(profilesFilePath, 'utf-8'));
       if (Array.isArray(data) && data.length > 0) {
         data.forEach(p => {
-          if (p.isDefault || p.server === 'vpn-production-9f65.up.railway.app') {
-            p.server = 'trolley.proxy.rlwy.net';
-            p.port = 26350;
+          if (p.isDefault || p.server === 'vpn-production-9f65.up.railway.app' || p.server === 'trolley.proxy.rlwy.net') {
+            p.server = 'sakura.proxy.rlwy.net';
+            p.port = 31165;
           }
         });
         return data;

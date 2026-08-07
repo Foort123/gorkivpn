@@ -59,8 +59,8 @@ function parseSSUrl(ssUrl) {
  * @param {{exe: string}[]} excluded - приложения, которые целиком идут мимо VPN
  */
 async function generateSingBoxConfig(profile, excluded = []) {
-  const server = profile.server || 'trolley.proxy.rlwy.net';
-  const port = parseInt(profile.port || 26350, 10);
+  const server = profile.server || 'sakura.proxy.rlwy.net';
+  const port = parseInt(profile.port || 31165, 10);
   const cipher = profile.cipher || 'aes-256-gcm';
   const password = profile.password || 'gR45-lDTr-9oPq-zXlc';
 
@@ -85,7 +85,7 @@ async function generateSingBoxConfig(profile, excluded = []) {
     dns: {
       servers: [
         // DoT через прокси — весь DNS клиента после подключения
-        { tag: "remote", type: "tls", server: "1.1.1.1", detour: "proxy" },
+        { tag: "remote", type: "https", server: "1.1.1.1", detour: "proxy" },
         // Резолвер для домена самого VPN-сервера и direct-приложений — системный.
         // Хардкод udp 8.8.8.8 сюда не годится: у многих провайдеров UDP:53 наружу
         // блокируется, домен VPN-сервера не резолвится и туннель не поднимается вовсе.
