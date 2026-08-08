@@ -5,18 +5,27 @@ const dns = require('dns').promises;
 // копиями в index.js, config-parser.js и трёх отладочных скриптах — при каждом
 // переезде часть копий забывали, и клиент шёл на снесённый хост со старым паролем.
 //
-// VLESS поверх WebSocket и TLS на 443, а не shadowsocks на отдельном порту. Причина
-// не в удобстве: голый shadowsocks через Railway TCP Proxy не проходит у российских
-// провайдеров. Проверено с двух сторон — сервер расшифровывал трафик от клиента
-// внутри дата-центра Railway и не расшифровывал ровно тот же трафик с домашней
-// машины. DPI узнаёт рукопожатие shadowsocks и портит начало потока, сервер видит
-// мусор вместо ключа. Здесь же снаружи всё выглядит как обычный визит на сайт по
-// https, придраться не к чему.
+// VLESS + REALITY, а не shadowsocks. Причина не в моде на протоколы:
+//
+// 1. Голый shadowsocks через Railway TCP Proxy не доходит с российских сетей. Сервер
+//    и ключ исправны — клиент внутри дата-центра Railway ходил через них успешно, —
+//    а тот же трафик с домашней машины приходил испорченным (authentication error)
+//    при совпадающих до md5 пароле и шифре. DPI узнаёт рукопожатие shadowsocks.
+// 2. Путь через HTTP-домен Railway на 443 тоже отпал: его IP 69.46.46.8 заблокирован
+//    целиком. TCP устанавливается, TLS не начинается — хоть с нашим именем в SNI,
+//    хоть с подставленным чужим. Блокировка по адресу, не по имени.
+// 3. Вход TCP Proxy (66.33.22.220) при этом рабочий, байты до контейнера доходят.
+//
+// Поэтому идём через рабочий вход, но рукопожатием, которое неотличимо от настоящего
+// визита на www.microsoft.com. sni — это имя сайта прикрытия, а не адрес сервера:
+// именно оно уходит в TLS-приветствии и именно его видит DPI.
 const DEFAULT_SERVER = {
-  server: 'vpn-production-30c5.up.railway.app',
-  port: 443,
+  server: 'altaria.proxy.rlwy.net',
+  port: 15525,
   uuid: '0b8c2e95-9895-49a6-8387-876272b25ae0',
-  wsPath: '/e26d04696bfa'
+  sni: 'www.microsoft.com',
+  publicKey: 'Z5vnJaxOCgPmBi0B0TFuFZNBqcpJd03MmNK2LqyC0Ws',
+  shortId: 'cda83ea5848c01af'
 };
 
 /**
@@ -34,17 +43,17 @@ function buildOutbound(profile, serverAddress) {
       uuid: profile.uuid,
       tls: {
         enabled: true,
-        // SNI берём из домена, а не из IP: подключаемся по IP (см. ниже), но edge
-        // Railway обязан понять, какой сайт мы просим, иначе вернёт чужой сертификат
-        server_name: profile.server || DEFAULT_SERVER.server,
-        // рукопожатие TLS под Chrome: без этого fingerprint выдаёт нестандартный
-        // клиент, а это ровно то, что ищет DPI
-        utls: { enabled: true, fingerprint: 'chrome' }
-      },
-      transport: {
-        type: 'ws',
-        path: profile.wsPath || DEFAULT_SERVER.wsPath,
-        headers: { Host: profile.server || DEFAULT_SERVER.server }
+        // Имя сайта прикрытия, а не адрес нашего сервера. Именно оно уходит открытым
+        // текстом в TLS-приветствии и именно его читает DPI.
+        server_name: profile.sni || DEFAULT_SERVER.sni,
+        // uTLS обязателен для REALITY и сам по себе полезен: без него отпечаток
+        // рукопожатия выдаёт нестандартный клиент, а это и есть то, что ищут
+        utls: { enabled: true, fingerprint: 'chrome' },
+        reality: {
+          enabled: true,
+          public_key: profile.publicKey || DEFAULT_SERVER.publicKey,
+          short_id: profile.shortId || DEFAULT_SERVER.shortId
+        }
       }
     };
   }

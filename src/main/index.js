@@ -70,7 +70,9 @@ const LEGACY_SERVERS = [
   'trolley.proxy.rlwy.net',
   'sakura.proxy.rlwy.net',
   'hayabusa.proxy.rlwy.net',
-  'altaria.proxy.rlwy.net'
+  // короткоживущий заход через HTTP-домен: его IP оказался заблокирован по адресу,
+  // профили с ним надо переписать, иначе клиент будет стучаться в глухую стену
+  'vpn-production-30c5.up.railway.app'
 ];
 
 function loadProfiles() {

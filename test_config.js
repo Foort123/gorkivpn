@@ -46,20 +46,23 @@ function singBoxAccepts(cfg) {
     'при отказе резолва остаётся домен, а не undefined'
   );
 
-  // Профиль по умолчанию — VLESS поверх WebSocket и TLS: голый shadowsocks через
-  // Railway TCP Proxy режет DPI, поэтому дефолт обязан ходить по 443 как обычный https
+  // Профиль по умолчанию — VLESS + REALITY: голый shadowsocks через Railway TCP Proxy
+  // режет DPI, а HTTP-вход Railway заблокирован по IP, так что остаётся маскировка
+  // рукопожатия под визит на посторонний сайт.
   const def = await generateSingBoxConfig({});
   const vl = def.outbounds.find(o => o.tag === 'proxy');
   assert.strictEqual(vl.type, 'vless', 'по умолчанию VLESS, а не shadowsocks');
-  assert.strictEqual(vl.server_port, 443, 'порт 443 — иначе трафик не похож на https');
   assert.ok(vl.uuid, 'uuid подставлен из DEFAULT_SERVER, а не потерян');
-  assert.strictEqual(vl.transport.type, 'ws');
-  assert.ok(vl.transport.path && vl.transport.path.startsWith('/'), 'путь WebSocket задан');
   assert.strictEqual(vl.tls.enabled, true);
-  // Подключаемся по IP, поэтому имя сайта обязано ехать отдельно: и в SNI, и в Host.
-  // Без этого edge Railway не поймёт, какой сервис просят, и вернёт чужой сертификат.
-  assert.strictEqual(vl.tls.server_name, DEFAULT_SERVER.server, 'SNI — домен, не IP');
-  assert.strictEqual(vl.transport.headers.Host, DEFAULT_SERVER.server, 'Host — домен, не IP');
+  assert.strictEqual(vl.tls.reality.enabled, true, 'REALITY включён');
+  assert.ok(vl.tls.reality.public_key, 'публичный ключ на месте');
+  assert.ok(vl.tls.reality.short_id, 'short_id на месте');
+  // Ключевое: в SNI уходит сайт прикрытия, а не наш адрес. Если сюда попадёт домен
+  // сервера, вся маскировка теряет смысл — DPI прочитает его открытым текстом.
+  assert.strictEqual(vl.tls.server_name, DEFAULT_SERVER.sni, 'SNI — сайт прикрытия');
+  assert.notStrictEqual(vl.tls.server_name, DEFAULT_SERVER.server, 'SNI не равен адресу сервера');
+  // uTLS обязателен для REALITY, без него sing-box конфиг не примет
+  assert.strictEqual(vl.tls.utls.enabled, true, 'uTLS включён');
   assert.ok(singBoxAccepts(def), 'sing-box принимает конфиг профиля по умолчанию');
   assert.strictEqual(plain.dns.rules[0].domain[0], 'example.net', 'домен сервера резолвится локально');
   assert.ok(!JSON.stringify(plain).includes('process_name'), 'без исключений правил процессов нет');
