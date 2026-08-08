@@ -1,6 +1,24 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
+const dnsp = require('dns').promises;
+const net = require('net');
+const { DEFAULT_SERVER } = require('./src/main/config-parser');
+
+const binPath = path.join(__dirname, 'bin', 'sing-box.exe');
+const configPath = path.join(__dirname, 'test_run_config.json');
+const fs = require('fs');
+
+let child;
+
+(async () => {
+// Резолвим средствами Node — ровно как боевой config-parser. Внутренний резолвер
+// sing-box ("local") отвечает не на каждой машине, и тест падал бы на DNS, а не на
+// том, что проверяет: доходит ли Shadowsocks-хендшейк до сервера.
+const serverIp = net.isIP(DEFAULT_SERVER.server)
+    ? DEFAULT_SERVER.server
+    : (await dnsp.resolve4(DEFAULT_SERVER.server))[0];
+console.log(`Сервер: ${DEFAULT_SERVER.server} -> ${serverIp}:${DEFAULT_SERVER.port}`);
 
 const configObj = {
     log: { level: 'info', timestamp: true },
@@ -13,24 +31,21 @@ const configObj = {
     outbounds: [{
         type: 'shadowsocks',
         tag: 'proxy',
-        server: 'hayabusa.proxy.rlwy.net',
-        server_port: 43081,
-        method: 'aes-256-gcm',
-        password: 'gR45-lDTr-9oPq-zXlc'
+        server: serverIp,
+        server_port: DEFAULT_SERVER.port,
+        method: DEFAULT_SERVER.cipher,
+        password: DEFAULT_SERVER.password
     }, {
         type: 'direct',
         tag: 'direct'
     }]
 };
 
-const configPath = path.join(__dirname, 'test_run_config.json');
-const fs = require('fs');
 fs.writeFileSync(configPath, JSON.stringify(configObj, null, 2));
 
-const binPath = path.join(__dirname, 'bin', 'sing-box.exe');
 console.log('Spawning sing-box...');
 
-const child = spawn(binPath, ['run', '-c', configPath], {
+child = spawn(binPath, ['run', '-c', configPath], {
     cwd: __dirname,
     windowsHide: true
 });
@@ -80,3 +95,4 @@ setTimeout(() => {
         }, 1000);
     }
 }, 2000);
+})();

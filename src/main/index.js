@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const ProxyManager = require('./proxy-manager');
-const { parseSSUrl, generateSingBoxConfig } = require('./config-parser');
+const { DEFAULT_SERVER, parseSSUrl, generateSingBoxConfig } = require('./config-parser');
 const { listProcesses } = require('./processes');
 
 // Новый логотип GORKIVPN — многоразмерный .ico для окна и трея
@@ -60,12 +60,17 @@ const profilesFilePath = path.join(app.getPath('userData'), 'vpn_profiles.json')
 const defaultProfile = {
   id: 'railway-default-1',
   name: 'GORKIVPN',
-  server: 'hayabusa.proxy.rlwy.net',
-  port: 43081,
-  cipher: 'aes-256-gcm',
-  password: 'gR45-lDTr-9oPq-zXlc',
+  ...DEFAULT_SERVER,
   isDefault: true
 };
+
+// Хосты прошлых переездов: профиль с любым из них считаем устаревшим и переписываем
+const LEGACY_SERVERS = [
+  'vpn-production-9f65.up.railway.app',
+  'trolley.proxy.rlwy.net',
+  'sakura.proxy.rlwy.net',
+  'hayabusa.proxy.rlwy.net'
+];
 
 function loadProfiles() {
   try {
@@ -74,9 +79,14 @@ function loadProfiles() {
       if (Array.isArray(data) && data.length > 0) {
         let changed = false;
         data.forEach(p => {
-          if (p.isDefault || p.server === 'vpn-production-9f65.up.railway.app' || p.server === 'trolley.proxy.rlwy.net' || p.server === 'sakura.proxy.rlwy.net') {
-            p.server = 'hayabusa.proxy.rlwy.net';
-            p.port = 43081;
+          if (p.isDefault || LEGACY_SERVERS.includes(p.server)) {
+            // Пароль и метод переписываем тоже: при переезде на новый аккаунт Railway
+            // меняется и PASSWORD. Раньше мигрировались только server/port, и у всех,
+            // кто уже поставил клиент, оставался пароль от снесённого сервера.
+            p.server = defaultProfile.server;
+            p.port = defaultProfile.port;
+            p.cipher = defaultProfile.cipher;
+            p.password = defaultProfile.password;
             changed = true;
           }
         });

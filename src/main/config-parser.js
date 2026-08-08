@@ -1,6 +1,16 @@
 const net = require('net');
 const dns = require('dns').promises;
 
+// Единственный источник правды по серверу по умолчанию. Раньше эти четыре значения
+// лежали копиями в index.js, config-parser.js и трёх отладочных скриптах — при каждом
+// переезде часть копий забывали, и клиент шёл на снесённый хост со старым паролем.
+const DEFAULT_SERVER = {
+  server: 'altaria.proxy.rlwy.net',
+  port: 15525,
+  cipher: 'aes-256-gcm',
+  password: 'nkpbu-irWFX-snzju-M5WQr-zqQr6'
+};
+
 /**
  * Parses an ss:// URI or raw object into standard proxy options
  */
@@ -59,10 +69,10 @@ function parseSSUrl(ssUrl) {
  * @param {{exe: string}[]} excluded - приложения, которые целиком идут мимо VPN
  */
 async function generateSingBoxConfig(profile, excluded = []) {
-  const server = profile.server || 'hayabusa.proxy.rlwy.net';
-  const port = parseInt(profile.port || 43081, 10);
-  const cipher = profile.cipher || 'aes-256-gcm';
-  const password = profile.password || 'gR45-lDTr-9oPq-zXlc';
+  const server = profile.server || DEFAULT_SERVER.server;
+  const port = parseInt(profile.port || DEFAULT_SERVER.port, 10);
+  const cipher = profile.cipher || DEFAULT_SERVER.cipher;
+  const password = profile.password || DEFAULT_SERVER.password;
 
   const bypass = excluded.filter(e => e && e.exe).map(e => e.exe);
 
@@ -122,9 +132,16 @@ async function generateSingBoxConfig(profile, excluded = []) {
     ],
     outbounds: [
       {
+        // Домен, а не IP, здесь вешал подключение: sing-box резолвит адрес аутбаунда
+        // своим DNS, а транспорт "local" отвечает не на каждой машине — при зарезанном
+        // наружу UDP:53 запрос молча висит 10 с и соединение отваливается, хотя TCP до
+        // сервера проходит нормально. IP уже получен через резолвер Node выше (он же
+        // используется для anti-loop правил), им и подключаемся. Резолв происходит при
+        // каждом нажатии «Подключить», так что смена IP у Railway подхватится сама.
+        // Домен остаётся запасным вариантом, если резолв не удался.
         type: "shadowsocks",
         tag: "proxy",
-        server: server,
+        server: serverIps[0] || server,
         server_port: port,
         method: cipher,
         password: password
@@ -162,6 +179,7 @@ async function generateSingBoxConfig(profile, excluded = []) {
 }
 
 module.exports = {
+  DEFAULT_SERVER,
   parseSSUrl,
   generateSingBoxConfig
 };

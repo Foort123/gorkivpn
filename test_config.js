@@ -1,6 +1,7 @@
 // node test_config.js
 const assert = require('assert');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { generateSingBoxConfig, parseSSUrl } = require('./src/main/config-parser');
@@ -25,8 +26,23 @@ function singBoxAccepts(cfg) {
   const plain = await generateSingBoxConfig(profile);
   const ss = plain.outbounds.find(o => o.tag === 'proxy');
   assert.deepStrictEqual(
-    [ss.server, ss.server_port, ss.method, ss.password],
-    ['example.net', 1234, 'aes-256-gcm', 'pw']
+    [ss.server_port, ss.method, ss.password],
+    [1234, 'aes-256-gcm', 'pw']
+  );
+  // В аутбаунд идёт IP, а не домен: резолвер sing-box ("local") отвечает не на каждой
+  // машине, и подключение вешалось на 10 с ещё до попытки хендшейка.
+  assert.ok(net.isIP(ss.server), 'адрес сервера подставлен резолвленным IP');
+  assert.ok(
+    plain.inbounds[0].route_exclude_address.includes(`${ss.server}/32`),
+    'тот же IP исключён из маршрутов TUN — иначе петля'
+  );
+
+  // Если домен не резолвится, конфиг всё равно валиден: остаётся домен как был
+  const unresolvable = await generateSingBoxConfig({ ...profile, server: 'nx.invalid' });
+  assert.strictEqual(
+    unresolvable.outbounds.find(o => o.tag === 'proxy').server,
+    'nx.invalid',
+    'при отказе резолва остаётся домен, а не undefined'
   );
   assert.strictEqual(plain.dns.rules[0].domain[0], 'example.net', 'домен сервера резолвится локально');
   assert.ok(!JSON.stringify(plain).includes('process_name'), 'без исключений правил процессов нет');

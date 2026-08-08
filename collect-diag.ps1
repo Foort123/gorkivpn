@@ -87,7 +87,7 @@ Add ((Get-NetIPConfiguration | Where-Object { $_.NetProfile } |
       Select-Object InterfaceAlias, @{n='IPv4';e={$_.IPv4Address.IPAddress}},
                     @{n='GW';e={$_.IPv4DefaultGateway.NextHop}} |
       Format-Table -AutoSize | Out-String))
-Add "TCP до hayabusa.proxy.rlwy.net:43081 : $((Test-NetConnection hayabusa.proxy.rlwy.net -Port 43081 -WarningAction SilentlyContinue).TcpTestSucceeded)"
+Add "TCP до altaria.proxy.rlwy.net:15525 : $((Test-NetConnection altaria.proxy.rlwy.net -Port 15525 -WarningAction SilentlyContinue).TcpTestSucceeded)"
 
 Add ''
 Add '--- процессы ---'
