@@ -135,7 +135,7 @@
         <div class="modal-body">
           <div class="tab-buttons">
             <button id="tabKey" class="tab-btn active">ss:// Ключ / URL</button>
-            <button id="tabManual" class="tab-btn">Вручную (Railway)</button>
+            <button id="tabManual" class="tab-btn">Вручную (Shadowsocks)</button>
           </div>
 
           <form id="keyForm" class="tab-content active">
@@ -147,16 +147,16 @@
           <form id="manualForm" class="tab-content">
             <div class="form-group">
               <label>Название</label>
-              <input type="text" id="manualName" placeholder="Railway VPN" value="Railway VPN">
+              <input type="text" id="manualName" placeholder="Мой сервер" value="">
             </div>
             <div class="form-group">
-              <label>Хост / Сервер (Railway Proxy Domain)</label>
-              <input type="text" id="manualServer" placeholder="altaria.proxy.rlwy.net" value="altaria.proxy.rlwy.net">
+              <label>Хост / Сервер</label>
+              <input type="text" id="manualServer" placeholder="example.proxy.rlwy.net" value="">
             </div>
             <div class="form-row">
               <div class="form-group">
                 <label>Порт</label>
-                <input type="number" id="manualPort" placeholder="15525" value="15525">
+                <input type="number" id="manualPort" placeholder="8388" value="">
               </div>
               <div class="form-group">
                 <label>Шифрование</label>
@@ -165,7 +165,7 @@
             </div>
             <div class="form-group">
               <label>Пароль</label>
-              <input type="password" id="manualPassword" placeholder="Ваш PASSWORD из Railway" value="nkpbu-irWFX-snzju-M5WQr-zqQr6">
+              <input type="password" id="manualPassword" placeholder="Пароль сервера" value="">
             </div>
             <button type="submit" class="submit-btn">Сохранить сервер</button>
           </form>

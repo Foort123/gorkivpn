@@ -69,7 +69,8 @@ const LEGACY_SERVERS = [
   'vpn-production-9f65.up.railway.app',
   'trolley.proxy.rlwy.net',
   'sakura.proxy.rlwy.net',
-  'hayabusa.proxy.rlwy.net'
+  'hayabusa.proxy.rlwy.net',
+  'altaria.proxy.rlwy.net'
 ];
 
 function loadProfiles() {
@@ -78,22 +79,20 @@ function loadProfiles() {
       const data = JSON.parse(fs.readFileSync(profilesFilePath, 'utf-8'));
       if (Array.isArray(data) && data.length > 0) {
         let changed = false;
-        data.forEach(p => {
-          if (p.isDefault || LEGACY_SERVERS.includes(p.server)) {
-            // Пароль и метод переписываем тоже: при переезде на новый аккаунт Railway
-            // меняется и PASSWORD. Раньше мигрировались только server/port, и у всех,
-            // кто уже поставил клиент, оставался пароль от снесённого сервера.
-            p.server = defaultProfile.server;
-            p.port = defaultProfile.port;
-            p.cipher = defaultProfile.cipher;
-            p.password = defaultProfile.password;
-            changed = true;
-          }
+        // Профиль пересобираем целиком, а не правим поля по одному. При переезде
+        // меняется не только адрес: сменился и протокол (shadowsocks -> VLESS), так что
+        // старые password и cipher надо убрать, а не оставить рядом с новым uuid.
+        // Точечная правка здесь уже подводила — мигрировали server с port, а ключ от
+        // снесённого сервера оставался, и подключение молча не работало.
+        const migrated = data.map(p => {
+          if (!p.isDefault && !LEGACY_SERVERS.includes(p.server)) return p;
+          changed = true;
+          return { ...defaultProfile, id: p.id || defaultProfile.id, name: p.name || defaultProfile.name };
         });
         if (changed) {
-          saveProfiles(data);
+          saveProfiles(migrated);
         }
-        return data;
+        return migrated;
       }
     }
   } catch (e) {

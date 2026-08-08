@@ -1,15 +1,63 @@
 const net = require('net');
 const dns = require('dns').promises;
 
-// Единственный источник правды по серверу по умолчанию. Раньше эти четыре значения
-// лежали копиями в index.js, config-parser.js и трёх отладочных скриптах — при каждом
+// Единственный источник правды по серверу по умолчанию. Раньше эти значения лежали
+// копиями в index.js, config-parser.js и трёх отладочных скриптах — при каждом
 // переезде часть копий забывали, и клиент шёл на снесённый хост со старым паролем.
+//
+// VLESS поверх WebSocket и TLS на 443, а не shadowsocks на отдельном порту. Причина
+// не в удобстве: голый shadowsocks через Railway TCP Proxy не проходит у российских
+// провайдеров. Проверено с двух сторон — сервер расшифровывал трафик от клиента
+// внутри дата-центра Railway и не расшифровывал ровно тот же трафик с домашней
+// машины. DPI узнаёт рукопожатие shadowsocks и портит начало потока, сервер видит
+// мусор вместо ключа. Здесь же снаружи всё выглядит как обычный визит на сайт по
+// https, придраться не к чему.
 const DEFAULT_SERVER = {
-  server: 'altaria.proxy.rlwy.net',
-  port: 15525,
-  cipher: 'aes-256-gcm',
-  password: 'nkpbu-irWFX-snzju-M5WQr-zqQr6'
+  server: 'vpn-production-30c5.up.railway.app',
+  port: 443,
+  uuid: '0b8c2e95-9895-49a6-8387-876272b25ae0',
+  wsPath: '/e26d04696bfa'
 };
+
+/**
+ * Строит аутбаунд по профилю. Профили двух видов: новый VLESS (есть uuid) и старые
+ * shadowsocks-ключи, которые пользователь мог добавить сам через ss:// — их ломать
+ * нельзя, поэтому обе формы живут рядом.
+ */
+function buildOutbound(profile, serverAddress) {
+  if (profile.uuid) {
+    return {
+      type: 'vless',
+      tag: 'proxy',
+      server: serverAddress,
+      server_port: parseInt(profile.port || DEFAULT_SERVER.port, 10),
+      uuid: profile.uuid,
+      tls: {
+        enabled: true,
+        // SNI берём из домена, а не из IP: подключаемся по IP (см. ниже), но edge
+        // Railway обязан понять, какой сайт мы просим, иначе вернёт чужой сертификат
+        server_name: profile.server || DEFAULT_SERVER.server,
+        // рукопожатие TLS под Chrome: без этого fingerprint выдаёт нестандартный
+        // клиент, а это ровно то, что ищет DPI
+        utls: { enabled: true, fingerprint: 'chrome' }
+      },
+      transport: {
+        type: 'ws',
+        path: profile.wsPath || DEFAULT_SERVER.wsPath,
+        headers: { Host: profile.server || DEFAULT_SERVER.server }
+      }
+    };
+  }
+
+  return {
+    type: 'shadowsocks',
+    tag: 'proxy',
+    server: serverAddress,
+    server_port: parseInt(profile.port, 10),
+    method: profile.cipher || 'aes-256-gcm',
+    password: profile.password
+  };
+}
 
 /**
  * Parses an ss:// URI or raw object into standard proxy options
@@ -69,10 +117,10 @@ function parseSSUrl(ssUrl) {
  * @param {{exe: string}[]} excluded - приложения, которые целиком идут мимо VPN
  */
 async function generateSingBoxConfig(profile, excluded = []) {
-  const server = profile.server || DEFAULT_SERVER.server;
-  const port = parseInt(profile.port || DEFAULT_SERVER.port, 10);
-  const cipher = profile.cipher || DEFAULT_SERVER.cipher;
-  const password = profile.password || DEFAULT_SERVER.password;
+  // Профиль без своего сервера — это профиль по умолчанию: подставляем его целиком,
+  // иначе от DEFAULT_SERVER возьмётся хост, а uuid и путь останутся пустыми.
+  const effective = profile && profile.server ? profile : { ...DEFAULT_SERVER, ...profile };
+  const server = effective.server;
 
   const bypass = excluded.filter(e => e && e.exe).map(e => e.exe);
 
@@ -131,21 +179,14 @@ async function generateSingBoxConfig(profile, excluded = []) {
       }
     ],
     outbounds: [
-      {
-        // Домен, а не IP, здесь вешал подключение: sing-box резолвит адрес аутбаунда
-        // своим DNS, а транспорт "local" отвечает не на каждой машине — при зарезанном
-        // наружу UDP:53 запрос молча висит 10 с и соединение отваливается, хотя TCP до
-        // сервера проходит нормально. IP уже получен через резолвер Node выше (он же
-        // используется для anti-loop правил), им и подключаемся. Резолв происходит при
-        // каждом нажатии «Подключить», так что смена IP у Railway подхватится сама.
-        // Домен остаётся запасным вариантом, если резолв не удался.
-        type: "shadowsocks",
-        tag: "proxy",
-        server: serverIps[0] || server,
-        server_port: port,
-        method: cipher,
-        password: password
-      },
+      // Подключаемся по IP, а не по домену: sing-box резолвит адрес аутбаунда своим
+      // DNS, а транспорт "local" отвечает не на каждой машине — при зарезанном наружу
+      // UDP:53 запрос молча висит 10 с и соединение отваливается, хотя TCP до сервера
+      // проходит нормально. IP уже получен резолвером Node выше (он же идёт в anti-loop
+      // правила), им и подключаемся; домен при этом остаётся в SNI и в заголовке Host,
+      // иначе edge Railway не поймёт, какой сайт мы просим. Резолв делается при каждом
+      // нажатии «Подключить», так что смена IP подхватится сама.
+      buildOutbound(effective, serverIps[0] || server),
       {
         type: "direct",
         tag: "direct"
@@ -180,6 +221,7 @@ async function generateSingBoxConfig(profile, excluded = []) {
 
 module.exports = {
   DEFAULT_SERVER,
+  buildOutbound,
   parseSSUrl,
   generateSingBoxConfig
 };

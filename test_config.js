@@ -4,7 +4,7 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { generateSingBoxConfig, parseSSUrl } = require('./src/main/config-parser');
+const { DEFAULT_SERVER, generateSingBoxConfig, parseSSUrl } = require('./src/main/config-parser');
 const { groupProcesses } = require('./src/main/processes');
 const ProxyManager = require('./src/main/proxy-manager');
 
@@ -26,8 +26,9 @@ function singBoxAccepts(cfg) {
   const plain = await generateSingBoxConfig(profile);
   const ss = plain.outbounds.find(o => o.tag === 'proxy');
   assert.deepStrictEqual(
-    [ss.server_port, ss.method, ss.password],
-    [1234, 'aes-256-gcm', 'pw']
+    [ss.type, ss.server_port, ss.method, ss.password],
+    ['shadowsocks', 1234, 'aes-256-gcm', 'pw'],
+    'профиль с password остаётся shadowsocks — свои ss:// ключи ломать нельзя'
   );
   // В аутбаунд идёт IP, а не домен: резолвер sing-box ("local") отвечает не на каждой
   // машине, и подключение вешалось на 10 с ещё до попытки хендшейка.
@@ -44,6 +45,22 @@ function singBoxAccepts(cfg) {
     'nx.invalid',
     'при отказе резолва остаётся домен, а не undefined'
   );
+
+  // Профиль по умолчанию — VLESS поверх WebSocket и TLS: голый shadowsocks через
+  // Railway TCP Proxy режет DPI, поэтому дефолт обязан ходить по 443 как обычный https
+  const def = await generateSingBoxConfig({});
+  const vl = def.outbounds.find(o => o.tag === 'proxy');
+  assert.strictEqual(vl.type, 'vless', 'по умолчанию VLESS, а не shadowsocks');
+  assert.strictEqual(vl.server_port, 443, 'порт 443 — иначе трафик не похож на https');
+  assert.ok(vl.uuid, 'uuid подставлен из DEFAULT_SERVER, а не потерян');
+  assert.strictEqual(vl.transport.type, 'ws');
+  assert.ok(vl.transport.path && vl.transport.path.startsWith('/'), 'путь WebSocket задан');
+  assert.strictEqual(vl.tls.enabled, true);
+  // Подключаемся по IP, поэтому имя сайта обязано ехать отдельно: и в SNI, и в Host.
+  // Без этого edge Railway не поймёт, какой сервис просят, и вернёт чужой сертификат.
+  assert.strictEqual(vl.tls.server_name, DEFAULT_SERVER.server, 'SNI — домен, не IP');
+  assert.strictEqual(vl.transport.headers.Host, DEFAULT_SERVER.server, 'Host — домен, не IP');
+  assert.ok(singBoxAccepts(def), 'sing-box принимает конфиг профиля по умолчанию');
   assert.strictEqual(plain.dns.rules[0].domain[0], 'example.net', 'домен сервера резолвится локально');
   assert.ok(!JSON.stringify(plain).includes('process_name'), 'без исключений правил процессов нет');
   assert.ok(singBoxAccepts(plain), 'sing-box принимает базовый конфиг');

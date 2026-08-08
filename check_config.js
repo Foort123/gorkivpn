@@ -1,12 +1,12 @@
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { DEFAULT_SERVER } = require('./src/main/config-parser');
+const { DEFAULT_SERVER, buildOutbound } = require('./src/main/config-parser');
 
 const config = {
     log: { level: "trace" },
     inbounds: [{ type: "mixed", tag: "mixed-in", listen: "127.0.0.1", listen_port: 10808 }],
     outbounds: [
-        { type: "shadowsocks", tag: "proxy", server: DEFAULT_SERVER.server, server_port: DEFAULT_SERVER.port, method: DEFAULT_SERVER.cipher, password: DEFAULT_SERVER.password },
+        buildOutbound(DEFAULT_SERVER, DEFAULT_SERVER.server),
         { type: "direct", tag: "direct" },
         { type: "block", tag: "block" }
     ],
