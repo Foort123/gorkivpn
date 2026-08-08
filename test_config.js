@@ -54,9 +54,18 @@ function singBoxAccepts(cfg) {
   assert.strictEqual(vl.type, 'vless', 'по умолчанию VLESS, а не shadowsocks');
   assert.ok(vl.uuid, 'uuid подставлен из DEFAULT_SERVER, а не потерян');
   assert.strictEqual(vl.tls.enabled, true);
-  assert.strictEqual(vl.tls.reality.enabled, true, 'REALITY включён');
-  assert.ok(vl.tls.reality.public_key, 'публичный ключ на месте');
-  assert.ok(vl.tls.reality.short_id, 'short_id на месте');
+  // Сертификат закреплён: без него клиент проверял бы цепочку по системным центрам
+  // и самоподписанный сервер отверг бы. С ним принимается ровно наш и никакой другой.
+  assert.ok(Array.isArray(vl.tls.certificate), 'сертификат закреплён на клиенте');
+  assert.ok(
+    vl.tls.certificate[0].includes('BEGIN CERTIFICATE'),
+    'сертификат передан в PEM построчно, как ждёт sing-box'
+  );
+  assert.ok(
+    !JSON.stringify(vl.tls).includes('PRIVATE KEY'),
+    'приватный ключ в клиент не попал — он остаётся только на сервере'
+  );
+  assert.notStrictEqual(vl.tls.insecure, true, 'проверка сертификата не отключена');
   // Ключевое: в SNI уходит сайт прикрытия, а не наш адрес. Если сюда попадёт домен
   // сервера, вся маскировка теряет смысл — DPI прочитает его открытым текстом.
   assert.strictEqual(vl.tls.server_name, DEFAULT_SERVER.sni, 'SNI — сайт прикрытия');

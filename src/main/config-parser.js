@@ -16,16 +16,42 @@ const dns = require('dns').promises;
 //    хоть с подставленным чужим. Блокировка по адресу, не по имени.
 // 3. Вход TCP Proxy (66.33.22.220) при этом рабочий, байты до контейнера доходят.
 //
-// Поэтому идём через рабочий вход, но рукопожатием, которое неотличимо от настоящего
-// визита на www.microsoft.com. sni — это имя сайта прикрытия, а не адрес сервера:
-// именно оно уходит в TLS-приветствии и именно его видит DPI.
+// Поэтому идём через рабочий вход, но обычным TLS: снаружи это рядовое https-
+// соединение, а sni — имя, которое видит DPI, к нашему адресу отношения не имеет.
+//
+// REALITY тут был бы строже, но не работает: между двумя sing-box рукопожатие
+// заканчивается "REALITY: processed invalid connection" (issue SagerNet/sing-box#4023,
+// с клиентами на Xray тот же сервер работает). Воспроизвёл локально на свежей паре
+// ключей, при пустом и заданном short_id, на всех отпечатках uTLS — обойти нечем.
+//
+// Сертификат самоподписанный и закреплён здесь целиком. Это не слабее проверки по
+// цепочке, а строже: клиент принимает ровно этот сертификат и никакой другой, так что
+// подменить сервер по дороге нельзя. Приватный ключ остаётся на сервере, здесь только
+// публичная часть — её видит каждый, кто открывает соединение.
 const DEFAULT_SERVER = {
   server: 'altaria.proxy.rlwy.net',
   port: 15525,
   uuid: '0b8c2e95-9895-49a6-8387-876272b25ae0',
   sni: 'www.microsoft.com',
-  publicKey: 'Z5vnJaxOCgPmBi0B0TFuFZNBqcpJd03MmNK2LqyC0Ws',
-  shortId: 'cda83ea5848c01af'
+  cert: `-----BEGIN CERTIFICATE-----
+MIIDFTCCAf2gAwIBAgIQUxM5PM48Zx4b7Lf/71qRYjANBgkqhkiG9w0BAQsFADAc
+MRowGAYDVQQDExF3d3cubWljcm9zb2Z0LmNvbTAeFw0yNjA4MDgxNDMzMDNaFw0z
+NjA4MDgxNTMzMDNaMBwxGjAYBgNVBAMTEXd3dy5taWNyb3NvZnQuY29tMIIBIjAN
+BgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2H074kuG9vOTdzlVibW5FCsS9Npx
+ybhPo0zoXKmtMO9azCWTeUyJenIf4Ad871FcN8m3xuSHirYW0VuGYuyrKVqhYuBR
+27NnQXoYXCGaPlGlFTp/i5cTE7J+l989zSuewnX4nUKLIII0GBopg1ZgVLgq+5ox
+StG/w5sBZFr2+FFg3cVceIM48s73kjjlPMU/oyqd//L2QK4FpLfnTEIi1ItwAb0m
+24cZz2wByUBNHKMjUeZdVWWfkBIu5FhjoomK5KDcwLehtV4UkGwmhgUV/nI6Epwj
+8D+3UHlmvZxitTkbMI4cqk6pv8lr7nIACAy0EiwvddqrZ9ErPyblyxzMhQIDAQAB
+o1MwUTAOBgNVHQ8BAf8EBAMCBaAwEwYDVR0lBAwwCgYIKwYBBQUHAwEwDAYDVR0T
+AQH/BAIwADAcBgNVHREEFTATghF3d3cubWljcm9zb2Z0LmNvbTANBgkqhkiG9w0B
+AQsFAAOCAQEASTWLyx6bifrCHdb1W+Sy011VBqBi2eMVlE6f0bVioyx+bUEezU7p
+i0I885alg+PH23cOwcABN3Gn29dd/txRBAlhp4/d02WeT0S+KDiI3k0yHvSS9nSQ
+TbhrHMuzEv3MeDs+1+WCZtkRrpwa5lzpn2h0OGrqKNNavSD78uaGDO0XaiMeGwXp
+U8+SBBt3wq5UacqABwjpiwhYza+E9eddUwhCHToVlT+74/5s1wlrQx7P0nyQuj9v
+4h/YhZ8GzbVHjF29S00lf2T0Rq5rSMaFJA6BQ4y7zjosAM0UnFj1YHwt+pjV1U6t
+a+S+AR5JMTw15uUH8h/A2GK05LgdtS9ctw==
+-----END CERTIFICATE-----`.split('\n')
 };
 
 /**
@@ -46,14 +72,12 @@ function buildOutbound(profile, serverAddress) {
         // Имя сайта прикрытия, а не адрес нашего сервера. Именно оно уходит открытым
         // текстом в TLS-приветствии и именно его читает DPI.
         server_name: profile.sni || DEFAULT_SERVER.sni,
-        // uTLS обязателен для REALITY и сам по себе полезен: без него отпечаток
-        // рукопожатия выдаёт нестандартный клиент, а это и есть то, что ищут
+        // Без uTLS отпечаток рукопожатия выдаёт нестандартный клиент, а это и есть
+        // то, по чему фильтруют. С ним соединение выглядит как из Chrome.
         utls: { enabled: true, fingerprint: 'chrome' },
-        reality: {
-          enabled: true,
-          public_key: profile.publicKey || DEFAULT_SERVER.publicKey,
-          short_id: profile.shortId || DEFAULT_SERVER.shortId
-        }
+        // Закреплённый сертификат вместо доверия системным центрам: он самоподписанный,
+        // но клиент принимает ровно его, поэтому подменить сервер по дороге нельзя.
+        certificate: profile.cert || DEFAULT_SERVER.cert
       }
     };
   }
