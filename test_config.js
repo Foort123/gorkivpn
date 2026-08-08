@@ -51,27 +51,15 @@ function singBoxAccepts(cfg) {
   // рукопожатия под визит на посторонний сайт.
   const def = await generateSingBoxConfig({});
   const vl = def.outbounds.find(o => o.tag === 'proxy');
-  assert.strictEqual(vl.type, 'vless', 'по умолчанию VLESS, а не shadowsocks');
+  assert.strictEqual(vl.type, 'vmess', 'по умолчанию VMess, а не shadowsocks');
   assert.ok(vl.uuid, 'uuid подставлен из DEFAULT_SERVER, а не потерян');
-  assert.strictEqual(vl.tls.enabled, true);
-  // Сертификат закреплён: без него клиент проверял бы цепочку по системным центрам
-  // и самоподписанный сервер отверг бы. С ним принимается ровно наш и никакой другой.
-  assert.ok(Array.isArray(vl.tls.certificate), 'сертификат закреплён на клиенте');
-  assert.ok(
-    vl.tls.certificate[0].includes('BEGIN CERTIFICATE'),
-    'сертификат передан в PEM построчно, как ждёт sing-box'
-  );
-  assert.ok(
-    !JSON.stringify(vl.tls).includes('PRIVATE KEY'),
-    'приватный ключ в клиент не попал — он остаётся только на сервере'
-  );
-  assert.notStrictEqual(vl.tls.insecure, true, 'проверка сертификата не отключена');
-  // Ключевое: в SNI уходит сайт прикрытия, а не наш адрес. Если сюда попадёт домен
-  // сервера, вся маскировка теряет смысл — DPI прочитает его открытым текстом.
-  assert.strictEqual(vl.tls.server_name, DEFAULT_SERVER.sni, 'SNI — сайт прикрытия');
-  assert.notStrictEqual(vl.tls.server_name, DEFAULT_SERVER.server, 'SNI не равен адресу сервера');
-  // uTLS обязателен для REALITY, без него sing-box конфиг не примет
-  assert.strictEqual(vl.tls.utls.enabled, true, 'uTLS включён');
+  assert.strictEqual(vl.transport.type, 'ws', 'транспорт WebSocket');
+  assert.ok(vl.transport.path && vl.transport.path.startsWith('/'), 'путь WebSocket задан');
+  // TLS здесь намеренно нет: любое TLS-рукопожатие на этот адрес глушится провайдером,
+  // проверено на трёх разных SNI. Если его сюда вернут, подключение снова умрёт.
+  assert.ok(!vl.tls || vl.tls.enabled !== true, 'TLS выключен — с ним соединение не проходит');
+  // Раз транспорт открытый, шифровать обязан сам VMess, иначе трафик пойдёт как есть
+  assert.strictEqual(vl.security, 'aes-128-gcm', 'содержимое шифруется VMess');
   assert.ok(singBoxAccepts(def), 'sing-box принимает конфиг профиля по умолчанию');
   assert.strictEqual(plain.dns.rules[0].domain[0], 'example.net', 'домен сервера резолвится локально');
   assert.ok(!JSON.stringify(plain).includes('process_name'), 'без исключений правил процессов нет');

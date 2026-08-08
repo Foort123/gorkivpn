@@ -5,79 +5,52 @@ const dns = require('dns').promises;
 // копиями в index.js, config-parser.js и трёх отладочных скриптах — при каждом
 // переезде часть копий забывали, и клиент шёл на снесённый хост со старым паролем.
 //
-// VLESS + REALITY, а не shadowsocks. Причина не в моде на протоколы:
+// VMess поверх WebSocket без TLS. Это не первый выбор, а единственный уцелевший —
+// остальное отсекла фильтрация на пути (провайдер в России, ТСПУ):
 //
-// 1. Голый shadowsocks через Railway TCP Proxy не доходит с российских сетей. Сервер
-//    и ключ исправны — клиент внутри дата-центра Railway ходил через них успешно, —
-//    а тот же трафик с домашней машины приходил испорченным (authentication error)
-//    при совпадающих до md5 пароле и шифре. DPI узнаёт рукопожатие shadowsocks.
-// 2. Путь через HTTP-домен Railway на 443 тоже отпал: его IP 69.46.46.8 заблокирован
-//    целиком. TCP устанавливается, TLS не начинается — хоть с нашим именем в SNI,
-//    хоть с подставленным чужим. Блокировка по адресу, не по имени.
-// 3. Вход TCP Proxy (66.33.22.220) при этом рабочий, байты до контейнера доходят.
+// 1. Голый shadowsocks через TCP Proxy глушится: сервер и ключ исправны (клиент
+//    внутри дата-центра Railway ходил через них успешно), но с домашней машины
+//    трафик приходит испорченным. DPI узнаёт рукопожатие по случайным первым байтам.
+// 2. HTTP-вход Railway 69.46.46.8 заблокирован по адресу целиком.
+// 3. Любое TLS-рукопожатие на вход TCP Proxy 66.33.22.220 глушится — проверено на
+//    SNI www.microsoft.com, altaria.proxy.rlwy.net и github.com, результат один.
+// 4. REALITY не работает между двумя sing-box: SagerNet/sing-box#4023, воспроизведено
+//    локально на свежих ключах и всех отпечатках uTLS.
 //
-// Поэтому идём через рабочий вход, но обычным TLS: снаружи это рядовое https-
-// соединение, а sni — имя, которое видит DPI, к нашему адресу отношения не имеет.
-//
-// REALITY тут был бы строже, но не работает: между двумя sing-box рукопожатие
-// заканчивается "REALITY: processed invalid connection" (issue SagerNet/sing-box#4023,
-// с клиентами на Xray тот же сервер работает). Воспроизвёл локально на свежей паре
-// ключей, при пустом и заданном short_id, на всех отпечатках uTLS — обойти нечем.
-//
-// Сертификат самоподписанный и закреплён здесь целиком. Это не слабее проверки по
-// цепочке, а строже: клиент принимает ровно этот сертификат и никакой другой, так что
-// подменить сервер по дороге нельзя. Приватный ключ остаётся на сервере, здесь только
-// публичная часть — её видит каждый, кто открывает соединение.
+// А обычный HTTP на тот же адрес проходит: посланный вручную GET дошёл до сервера и
+// был отвергнут за 161 мс. Отсюда WebSocket без TLS — соединение открывается рядовым
+// GET с Upgrade, низкая энтропия, распознавать нечего. Содержимое шифрует сам VMess,
+// так что трафик закрыт; не закрыт лишь факт использования прокси, но при заглушенном
+// TLS выбора нет.
 const DEFAULT_SERVER = {
   server: 'altaria.proxy.rlwy.net',
   port: 15525,
-  uuid: '0b8c2e95-9895-49a6-8387-876272b25ae0',
-  sni: 'www.microsoft.com',
-  cert: `-----BEGIN CERTIFICATE-----
-MIIDFTCCAf2gAwIBAgIQUxM5PM48Zx4b7Lf/71qRYjANBgkqhkiG9w0BAQsFADAc
-MRowGAYDVQQDExF3d3cubWljcm9zb2Z0LmNvbTAeFw0yNjA4MDgxNDMzMDNaFw0z
-NjA4MDgxNTMzMDNaMBwxGjAYBgNVBAMTEXd3dy5taWNyb3NvZnQuY29tMIIBIjAN
-BgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2H074kuG9vOTdzlVibW5FCsS9Npx
-ybhPo0zoXKmtMO9azCWTeUyJenIf4Ad871FcN8m3xuSHirYW0VuGYuyrKVqhYuBR
-27NnQXoYXCGaPlGlFTp/i5cTE7J+l989zSuewnX4nUKLIII0GBopg1ZgVLgq+5ox
-StG/w5sBZFr2+FFg3cVceIM48s73kjjlPMU/oyqd//L2QK4FpLfnTEIi1ItwAb0m
-24cZz2wByUBNHKMjUeZdVWWfkBIu5FhjoomK5KDcwLehtV4UkGwmhgUV/nI6Epwj
-8D+3UHlmvZxitTkbMI4cqk6pv8lr7nIACAy0EiwvddqrZ9ErPyblyxzMhQIDAQAB
-o1MwUTAOBgNVHQ8BAf8EBAMCBaAwEwYDVR0lBAwwCgYIKwYBBQUHAwEwDAYDVR0T
-AQH/BAIwADAcBgNVHREEFTATghF3d3cubWljcm9zb2Z0LmNvbTANBgkqhkiG9w0B
-AQsFAAOCAQEASTWLyx6bifrCHdb1W+Sy011VBqBi2eMVlE6f0bVioyx+bUEezU7p
-i0I885alg+PH23cOwcABN3Gn29dd/txRBAlhp4/d02WeT0S+KDiI3k0yHvSS9nSQ
-TbhrHMuzEv3MeDs+1+WCZtkRrpwa5lzpn2h0OGrqKNNavSD78uaGDO0XaiMeGwXp
-U8+SBBt3wq5UacqABwjpiwhYza+E9eddUwhCHToVlT+74/5s1wlrQx7P0nyQuj9v
-4h/YhZ8GzbVHjF29S00lf2T0Rq5rSMaFJA6BQ4y7zjosAM0UnFj1YHwt+pjV1U6t
-a+S+AR5JMTw15uUH8h/A2GK05LgdtS9ctw==
------END CERTIFICATE-----`.split('\n')
+  uuid: '43698ce4-7cf4-432d-8938-1b7b908d5a1c',
+  wsPath: '/3ee2889cb2'
 };
 
 /**
- * Строит аутбаунд по профилю. Профили двух видов: новый VLESS (есть uuid) и старые
+ * Строит аутбаунд по профилю. Профили двух видов: наш VMess (есть uuid) и старые
  * shadowsocks-ключи, которые пользователь мог добавить сам через ss:// — их ломать
  * нельзя, поэтому обе формы живут рядом.
  */
 function buildOutbound(profile, serverAddress) {
   if (profile.uuid) {
     return {
-      type: 'vless',
+      type: 'vmess',
       tag: 'proxy',
       server: serverAddress,
       server_port: parseInt(profile.port || DEFAULT_SERVER.port, 10),
       uuid: profile.uuid,
-      tls: {
-        enabled: true,
-        // Имя сайта прикрытия, а не адрес нашего сервера. Именно оно уходит открытым
-        // текстом в TLS-приветствии и именно его читает DPI.
-        server_name: profile.sni || DEFAULT_SERVER.sni,
-        // Без uTLS отпечаток рукопожатия выдаёт нестандартный клиент, а это и есть
-        // то, по чему фильтруют. С ним соединение выглядит как из Chrome.
-        utls: { enabled: true, fingerprint: 'chrome' },
-        // Закреплённый сертификат вместо доверия системным центрам: он самоподписанный,
-        // но клиент принимает ровно его, поэтому подменить сервер по дороге нельзя.
-        certificate: profile.cert || DEFAULT_SERVER.cert
+      // Шифрование содержимого берёт на себя VMess: TLS тут нет, и без этого трафик
+      // шёл бы открытым текстом.
+      security: 'aes-128-gcm',
+      // WebSocket без TLS. Соединение открывается обычным GET с Upgrade — низкая
+      // энтропия, снаружи неотличимо от рядового веб-сокета. Именно это и проходит
+      // там, где TLS-рукопожатие глушится целиком.
+      transport: {
+        type: 'ws',
+        path: profile.wsPath || DEFAULT_SERVER.wsPath
       }
     };
   }
