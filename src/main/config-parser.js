@@ -5,26 +5,18 @@ const dns = require('dns').promises;
 // копиями в index.js, config-parser.js и трёх отладочных скриптах — при каждом
 // переезде часть копий забывали, и клиент шёл на снесённый хост со старым паролем.
 //
-// VMess поверх WebSocket без TLS. Это не первый выбор, а единственный уцелевший —
-// остальное отсекла фильтрация на пути (провайдер в России, ТСПУ):
+// VMess поверх WebSocket с TLS, хостинг — Back4app. Переезд с Railway вынужденный:
+// оба входа Railway у провайдера (Россия, ТСПУ) заблокированы по адресу целиком —
+// ICMP до них проходит, TCP-соединение не устанавливается вовсе, при этом контрольные
+// Cloudflare и GitHub на 443 открываются. Смена протокола там уже ничего не решала.
 //
-// 1. Голый shadowsocks через TCP Proxy глушится: сервер и ключ исправны (клиент
-//    внутри дата-центра Railway ходил через них успешно), но с домашней машины
-//    трафик приходит испорченным. DPI узнаёт рукопожатие по случайным первым байтам.
-// 2. HTTP-вход Railway 69.46.46.8 заблокирован по адресу целиком.
-// 3. Любое TLS-рукопожатие на вход TCP Proxy 66.33.22.220 глушится — проверено на
-//    SNI www.microsoft.com, altaria.proxy.rlwy.net и github.com, результат один.
-// 4. REALITY не работает между двумя sing-box: SagerNet/sing-box#4023, воспроизведено
-//    локально на свежих ключах и всех отпечатках uTLS.
-//
-// А обычный HTTP на тот же адрес проходит: посланный вручную GET дошёл до сервера и
-// был отвергнут за 161 мс. Отсюда WebSocket без TLS — соединение открывается рядовым
-// GET с Upgrade, низкая энтропия, распознавать нечего. Содержимое шифрует сам VMess,
-// так что трафик закрыт; не закрыт лишь факт использования прокси, но при заглушенном
-// TLS выбора нет.
+// Здесь TLS включён, в отличие от прежней схемы: Back4app отдаёт сервис через
+// CloudFront по 443, и снаружи это обычный HTTPS-сайт с WebSocket — рукопожатие
+// проходит там, где вход Railway глушился целиком. Проверено: апгрейд на
+// wss://123-5ib8odu2.b4a.run/3ee2889cb2 возвращает 101.
 const DEFAULT_SERVER = {
-  server: 'altaria.proxy.rlwy.net',
-  port: 15525,
+  server: '123-5ib8odu2.b4a.run',
+  port: 443,
   uuid: '43698ce4-7cf4-432d-8938-1b7b908d5a1c',
   wsPath: '/3ee2889cb2'
 };
@@ -34,7 +26,7 @@ const DEFAULT_SERVER = {
  * shadowsocks-ключи, которые пользователь мог добавить сам через ss:// — их ломать
  * нельзя, поэтому обе формы живут рядом.
  */
-function buildOutbound(profile, serverAddress) {
+function buildOutbound(profile, serverAddress, serverName) {
   if (profile.uuid) {
     return {
       type: 'vmess',
@@ -42,15 +34,21 @@ function buildOutbound(profile, serverAddress) {
       server: serverAddress,
       server_port: parseInt(profile.port || DEFAULT_SERVER.port, 10),
       uuid: profile.uuid,
-      // Шифрование содержимого берёт на себя VMess: TLS тут нет, и без этого трафик
-      // шёл бы открытым текстом.
-      security: 'aes-128-gcm',
-      // WebSocket без TLS. Соединение открывается обычным GET с Upgrade — низкая
-      // энтропия, снаружи неотличимо от рядового веб-сокета. Именно это и проходит
-      // там, где TLS-рукопожатие глушится целиком.
+      security: 'auto',
+      alter_id: 0,
       transport: {
         type: 'ws',
-        path: profile.wsPath || DEFAULT_SERVER.wsPath
+        path: profile.wsPath || DEFAULT_SERVER.wsPath,
+        // Host обязателен: подключаемся по IP, а edge CloudFront по нему не понимает,
+        // какой сервис мы просим, и отвечает 502 ещё до контейнера.
+        headers: { Host: serverName }
+      },
+      // Домен, а не адрес подключения: serverAddress — это уже отрезолвленный IP,
+      // сертификат выписан на домен, и SNI по IP развалит рукопожатие.
+      tls: {
+        enabled: true,
+        server_name: serverName,
+        insecure: false
       }
     };
   }
@@ -169,12 +167,18 @@ async function generateSingBoxConfig(profile, excluded = []) {
       {
         type: "tun",
         tag: "tun-in",
-        address: ["172.19.0.1/30"],
+        // IPv6-адрес нужен, даже когда наружу ходим только по v4: без него у TUN нет
+        // v6-маршрута, и приложение, предпочитающее IPv6 или идущее на литеральный
+        // v6-адрес, уходит мимо туннеля через физический адаптер.
+        address: ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
         mtu: 9000,
         auto_route: true,
-        // strict_route: false — если SS сервер недоступен, трафик идёт напрямую
-        // (с true весь интернет ломается при любой проблеме с SS)
-        strict_route: false,
+        // strict_route: true — auto_route сам по себе только прописывает маршруты, а
+        // приложение, привязавшееся к физическому адаптеру или к своему DNS, их обходит.
+        // На Windows strict_route добавляет правила файрвола и закрывает лазейку.
+        // Плата: при недоступном сервере интернета не будет вовсе (kill-switch) вместо
+        // тихого выхода в обход туннеля.
+        strict_route: true,
         // Адрес SS-сервера вообще не должен попадать в маршруты TUN. Одного route-правила
         // "ip_cidr -> direct" мало: пакет уже внутри туннеля, direct отправляет его снова,
         // он снова перехватывается — петля остаётся, только без прокси. На машине с другими
@@ -192,7 +196,7 @@ async function generateSingBoxConfig(profile, excluded = []) {
       // правила), им и подключаемся; домен при этом остаётся в SNI и в заголовке Host,
       // иначе edge Railway не поймёт, какой сайт мы просим. Резолв делается при каждом
       // нажатии «Подключить», так что смена IP подхватится сама.
-      buildOutbound(effective, serverIps[0] || server),
+      buildOutbound(effective, serverIps[0] || server, server),
       {
         type: "direct",
         tag: "direct"
