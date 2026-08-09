@@ -3,7 +3,7 @@ const crypto = require('crypto');
 
 // SHA-256 пароля вместо самого пароля. Настоящей защиты это не даёт — код клиента
 // распаковывается из app.asar, — но и читать пароль глазами в исходниках не приходится.
-const PASSWORD_HASH = 'c3198dd7f993d0e7eca09c9b361e5536a11c3eba55074ded531926747c5baf8b';
+const PASSWORD_HASH = '011339d2e317ab9491fafba23e98ba98ed86371c735fd8e7ddf5b9687c28d3da';
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 // Замок: спрашиваем пароль один раз на устройство. Флаг живёт в localStorage,
