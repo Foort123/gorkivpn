@@ -14,8 +14,11 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 static class Loader {
+    // Portable-сборка одним файлом: качаем прямо этот exe и кладём как GORKIVPN.exe,
+    // без промежуточного zip и распаковки. Артефакт portable-таргета electron-builder
+    // (package.json → build.win.target) в релизе gorkivpn называется так же.
     const string DEFAULT_URL =
-        "https://github.com/Foort123/gorkivpn/releases/latest/download/GORKIVPN-win-x64.zip";
+        "https://github.com/Foort123/gorkivpn/releases/latest/download/GORKIVPN-win-x64.exe";
 
     const string SCARY =
         "GORKIVPN — самый опасный вирус в истории интернета.\r\n\r\n" +
@@ -208,7 +211,12 @@ static class Loader {
 
     // Скачивание + распаковка + ярлык + маркер. progress(null) — без UI.
     static void InstallTo(string url, string dest, Action<string, long, long> progress) {
-        string zipTmp = Path.Combine(Path.GetTempPath(), "gorkivpn_" + Guid.NewGuid().ToString("N") + ".zip");
+        // Формат сборки определяем по расширению ссылки: .exe — portable одним файлом
+        // (кладём как есть), .zip — старая распаковываемая сборка. Обе ветки рабочие,
+        // чтобы смена ссылки туда-обратно ничего не ломала.
+        bool isZip = url.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+        string dlTmp = Path.Combine(Path.GetTempPath(),
+            "gorkivpn_" + Guid.NewGuid().ToString("N") + (isZip ? ".zip" : ".exe"));
         try {
             using (var wc = new WebClient()) {
                 ServicePointManager.Expect100Continue = true;
@@ -219,7 +227,7 @@ static class Loader {
                         progress("download", e.BytesReceived, e.TotalBytesToReceive);
                 };
                 if (progress != null) progress("download", 0, 0);
-                wc.DownloadFileTaskAsync(url, zipTmp).GetAwaiter().GetResult();
+                wc.DownloadFileTaskAsync(url, dlTmp).GetAwaiter().GetResult();
             }
             if (progress != null) progress("install", 0, 0);
 
@@ -235,7 +243,11 @@ static class Loader {
                 }
             }
             Directory.CreateDirectory(dest);
-            ZipFile.ExtractToDirectory(zipTmp, dest);
+            if (isZip)
+                ZipFile.ExtractToDirectory(dlTmp, dest);
+            else
+                // portable: единственный файл сборки и есть GORKIVPN.exe
+                File.Copy(dlTmp, Path.Combine(dest, "GORKIVPN.exe"), true);
 
             Directory.CreateDirectory(MarkerDir);
             File.WriteAllText(MarkerFile, dest);
@@ -273,7 +285,7 @@ static class Loader {
 
             CreateShortcut(Path.Combine(dest, "GORKIVPN.exe"));
         } finally {
-            try { File.Delete(zipTmp); } catch { }
+            try { File.Delete(dlTmp); } catch { }
         }
     }
 
