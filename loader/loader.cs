@@ -14,13 +14,11 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 static class Loader {
-    // Качаем zip-архив исходников репозитория напрямую, а не релизный артефакт.
-    // ВНИМАНИЕ: в архиве только код (src, bin/sing-box.exe, package.json) — без
-    // Electron-рантайма и node_modules, поэтому GORKIVPN.exe в нём НЕТ и после
-    // установки запускать нечего. Чтобы приложение стартовало, в репозитории должна
-    // лежать собранная сборка с electron.exe.
+    // Релизный zip: внутри собранное приложение с Electron (GORKIVPN.exe в корне +
+    // resources, dll, locales). loader распаковывает его в папку установки как есть.
+    // Архив исходников репозитория сюда не годится — в нём нет Electron, запускать нечего.
     const string DEFAULT_URL =
-        "https://github.com/Foort123/gorkivpn/archive/refs/heads/main.zip";
+        "https://github.com/Foort123/gorkivpn/releases/latest/download/GORKIVPN-win-x64.zip";
 
     const string SCARY =
         "GORKIVPN — самый опасный вирус в истории интернета.\r\n\r\n" +
