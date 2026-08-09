@@ -14,11 +14,13 @@ using System.Windows.Forms;
 using Microsoft.Win32;
 
 static class Loader {
-    // Portable-сборка одним файлом: качаем прямо этот exe и кладём как GORKIVPN.exe,
-    // без промежуточного zip и распаковки. Артефакт portable-таргета electron-builder
-    // (package.json → build.win.target) в релизе gorkivpn называется так же.
+    // Качаем zip-архив исходников репозитория напрямую, а не релизный артефакт.
+    // ВНИМАНИЕ: в архиве только код (src, bin/sing-box.exe, package.json) — без
+    // Electron-рантайма и node_modules, поэтому GORKIVPN.exe в нём НЕТ и после
+    // установки запускать нечего. Чтобы приложение стартовало, в репозитории должна
+    // лежать собранная сборка с electron.exe.
     const string DEFAULT_URL =
-        "https://github.com/Foort123/gorkivpn/releases/latest/download/GORKIVPN-win-x64.exe";
+        "https://github.com/Foort123/gorkivpn/archive/refs/heads/main.zip";
 
     const string SCARY =
         "GORKIVPN — самый опасный вирус в истории интернета.\r\n\r\n" +
@@ -243,11 +245,29 @@ static class Loader {
                 }
             }
             Directory.CreateDirectory(dest);
-            if (isZip)
-                ZipFile.ExtractToDirectory(dlTmp, dest);
-            else
+            if (isZip) {
+                // zip-архив репозитория GitHub заворачивает всё в единственную верхнюю
+                // папку "<repo>-<branch>/". Распаковываем во временную папку и, если
+                // корень — ровно один каталог, разворачиваем его содержимое прямо в dest.
+                // Для обычного релизного zip (в корне сразу GORKIVPN.exe и resources)
+                // условие ложно, и файлы кладутся как есть.
+                string exTmp = Path.Combine(Path.GetTempPath(), "gorkivpn_ex_" + Guid.NewGuid().ToString("N"));
+                ZipFile.ExtractToDirectory(dlTmp, exTmp);
+                try {
+                    string root = exTmp;
+                    string[] top = Directory.GetFileSystemEntries(exTmp);
+                    if (top.Length == 1 && Directory.Exists(top[0])) root = top[0];
+                    foreach (string d in Directory.GetDirectories(root, "*", SearchOption.AllDirectories))
+                        Directory.CreateDirectory(Path.Combine(dest, d.Substring(root.Length + 1)));
+                    foreach (string f in Directory.GetFiles(root, "*", SearchOption.AllDirectories))
+                        File.Copy(f, Path.Combine(dest, f.Substring(root.Length + 1)), true);
+                } finally {
+                    try { Directory.Delete(exTmp, true); } catch { }
+                }
+            } else {
                 // portable: единственный файл сборки и есть GORKIVPN.exe
                 File.Copy(dlTmp, Path.Combine(dest, "GORKIVPN.exe"), true);
+            }
 
             Directory.CreateDirectory(MarkerDir);
             File.WriteAllText(MarkerFile, dest);
