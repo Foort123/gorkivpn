@@ -72,7 +72,9 @@ const LEGACY_SERVERS = [
   'hayabusa.proxy.rlwy.net',
   // короткоживущий заход через HTTP-домен: его IP оказался заблокирован по адресу,
   // профили с ним надо переписать, иначе клиент будет стучаться в глухую стену
-  'vpn-production-30c5.up.railway.app'
+  'vpn-production-30c5.up.railway.app',
+  // Back4app: заход через CloudFront, снят после возврата на Railway с REALITY
+  '123-5ib8odu2.b4a.run'
 ];
 
 function loadProfiles() {

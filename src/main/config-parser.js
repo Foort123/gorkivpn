@@ -5,28 +5,60 @@ const dns = require('dns').promises;
 // копиями в index.js, config-parser.js и трёх отладочных скриптах — при каждом
 // переезде часть копий забывали, и клиент шёл на снесённый хост со старым паролем.
 //
-// VMess поверх WebSocket с TLS, хостинг — Back4app. Переезд с Railway вынужденный:
-// оба входа Railway у провайдера (Россия, ТСПУ) заблокированы по адресу целиком —
-// ICMP до них проходит, TCP-соединение не устанавливается вовсе, при этом контрольные
-// Cloudflare и GitHub на 443 открываются. Смена протокола там уже ничего не решала.
+// VLESS + REALITY на Railway, вход через TCP Proxy.
 //
-// Здесь TLS включён, в отличие от прежней схемы: Back4app отдаёт сервис через
-// CloudFront по 443, и снаружи это обычный HTTPS-сайт с WebSocket — рукопожатие
-// проходит там, где вход Railway глушился целиком. Проверено: апгрейд на
-// wss://123-5ib8odu2.b4a.run/3ee2889cb2 возвращает 101.
+// Прежняя заметка здесь утверждала, что оба входа Railway заблокированы по адресу
+// целиком. Это верно только для HTTPS-входа: TCP до 69.46.46.68:443 устанавливается,
+// но TLS не начинается. Вход TCP Proxy рабочий — проверено с российского адреса
+// напрямую, туннель встаёт и отдаёт 204.
+//
+// REALITY, а не VMess поверх WebSocket: не нужны ни свой домен, ни сертификат —
+// сервер заимствует их у сайта прикрытия, и снаружи рукопожатие неотличимо от
+// обычного визита туда.
 const DEFAULT_SERVER = {
-  server: '123-5ib8odu2.b4a.run',
-  port: 443,
-  uuid: '43698ce4-7cf4-432d-8938-1b7b908d5a1c',
-  wsPath: '/3ee2889cb2'
+  server: 'altaria.proxy.rlwy.net',
+  port: 17324,
+  uuid: 'f771344b-1827-408b-b1d7-be97ac045049',
+  reality: {
+    publicKey: 'nEHvyNAVKOZXmDCxFKEcoBzn_TAaaHIgl6MzXF7HMRc',
+    shortId: '40494322af7f360e',
+    // Сайт прикрытия. Обязан совпадать с SNI на сервере и быть достижимым ДЛЯ СЕРВЕРА:
+    // тот дозванивается туда на каждом рукопожатии. www.microsoft.com сюда не годится —
+    // из контейнера Railway он недоступен, и подключение рушится целиком.
+    sni: 'cloudflare-dns.com'
+  }
 };
 
 /**
- * Строит аутбаунд по профилю. Профили двух видов: наш VMess (есть uuid) и старые
- * shadowsocks-ключи, которые пользователь мог добавить сам через ss:// — их ломать
- * нельзя, поэтому обе формы живут рядом.
+ * Строит аутбаунд по профилю. Профили трёх видов: наш VLESS + REALITY (есть reality),
+ * VMess от прошлого переезда (есть uuid) и старые shadowsocks-ключи, добавленные
+ * пользователем через ss:// — ломать их нельзя, поэтому все формы живут рядом.
  */
 function buildOutbound(profile, serverAddress, serverName) {
+  if (profile.reality) {
+    return {
+      type: 'vless',
+      tag: 'proxy',
+      server: serverAddress,
+      server_port: parseInt(profile.port || DEFAULT_SERVER.port, 10),
+      uuid: profile.uuid,
+      flow: 'xtls-rprx-vision',
+      tls: {
+        enabled: true,
+        // Имя сайта прикрытия, а не нашего сервера: по нему сервер заимствует чужой
+        // сертификат, и его же видит наблюдатель. Наш домен здесь всё сломает.
+        server_name: profile.reality.sni,
+        // Без uTLS REALITY не проходит проверку: подделывается отпечаток Chrome.
+        utls: { enabled: true, fingerprint: 'chrome' },
+        reality: {
+          enabled: true,
+          public_key: profile.reality.publicKey,
+          short_id: profile.reality.shortId
+        }
+      }
+    };
+  }
+
   if (profile.uuid) {
     return {
       type: 'vmess',
