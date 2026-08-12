@@ -51,16 +51,25 @@ function singBoxAccepts(cfg) {
   // рукопожатия под визит на посторонний сайт.
   const def = await generateSingBoxConfig({});
   const vl = def.outbounds.find(o => o.tag === 'proxy');
-  assert.strictEqual(vl.type, 'vmess', 'по умолчанию VMess, а не shadowsocks');
+  assert.strictEqual(vl.type, 'vless', 'по умолчанию VLESS, а не shadowsocks');
   assert.ok(vl.uuid, 'uuid подставлен из DEFAULT_SERVER, а не потерян');
-  assert.strictEqual(vl.transport.type, 'ws', 'транспорт WebSocket');
-  assert.ok(vl.transport.path && vl.transport.path.startsWith('/'), 'путь WebSocket задан');
-  // TLS здесь намеренно нет: любое TLS-рукопожатие на этот адрес глушится провайдером,
-  // проверено на трёх разных SNI. Если его сюда вернут, подключение снова умрёт.
-  assert.ok(!vl.tls || vl.tls.enabled !== true, 'TLS выключен — с ним соединение не проходит');
-  // Раз транспорт открытый, шифровать обязан сам VMess, иначе трафик пойдёт как есть
-  assert.strictEqual(vl.security, 'aes-128-gcm', 'содержимое шифруется VMess');
+  assert.strictEqual(vl.flow, 'xtls-rprx-vision', 'flow обязан совпадать с серверным');
+  assert.strictEqual(vl.tls.enabled, true, 'REALITY живёт поверх TLS');
+  // Самая дорогая ошибка в этой схеме: подставить в SNI адрес нашего сервера. Сервер
+  // заимствует сертификат у сайта прикрытия именно по этому имени, и при подмене
+  // рукопожатие рушится, а в логе остаётся лишь "processed invalid connection".
+  assert.strictEqual(vl.tls.server_name, DEFAULT_SERVER.reality.sni, 'в SNI сайт прикрытия');
+  assert.notStrictEqual(vl.tls.server_name, DEFAULT_SERVER.server, 'в SNI не наш адрес');
+  // Без uTLS REALITY не проходит проверку на стороне сервера
+  assert.strictEqual(vl.tls.utls.enabled, true, 'uTLS включён');
+  assert.strictEqual(vl.tls.reality.enabled, true, 'REALITY включён');
+  assert.strictEqual(vl.tls.reality.public_key, DEFAULT_SERVER.reality.publicKey);
+  assert.strictEqual(vl.tls.reality.short_id, DEFAULT_SERVER.reality.shortId);
   assert.ok(singBoxAccepts(def), 'sing-box принимает конфиг профиля по умолчанию');
+
+  // Профили прошлых переездов ломать нельзя: ветка vmess должна остаться рабочей
+  const legacy = await generateSingBoxConfig({ server: 'example.net', port: 443, uuid: 'u', wsPath: '/p' });
+  assert.strictEqual(legacy.outbounds.find(o => o.tag === 'proxy').type, 'vmess', 'старый vmess-профиль жив');
   assert.strictEqual(plain.dns.rules[0].domain[0], 'example.net', 'домен сервера резолвится локально');
   assert.ok(!JSON.stringify(plain).includes('process_name'), 'без исключений правил процессов нет');
   assert.ok(singBoxAccepts(plain), 'sing-box принимает базовый конфиг');
