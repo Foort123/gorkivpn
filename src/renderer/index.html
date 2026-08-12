@@ -32,6 +32,12 @@
           <span class="brand-title">GORKI<span class="brand-accent">VPN</span></span>
         </div>
       </div>
+      <button id="consoleBtn" class="icon-btn" title="Консоль — что именно пошло не так">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 17 10 11 4 5"></polyline>
+          <line x1="12" y1="19" x2="20" y2="19"></line>
+        </svg>
+      </button>
       <button id="addKeyBtn" class="icon-btn" title="Добавить конфиг / ss:// ключ">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="12" y1="5" x2="12" y2="19"></line>
@@ -109,6 +115,15 @@
       <div id="excludeList" class="profile-list exclude-list">
         <!-- Excluded processes rendered dynamically -->
       </div>
+    </section>
+
+    <!-- Консоль: сверху шаги клиента, ниже живой лог sing-box с причиной отказа -->
+    <section id="consolePanel" class="profile-section console-section hidden">
+      <div class="section-header">
+        <span>Консоль</span>
+        <button id="copyLogBtn" class="text-btn">Копировать</button>
+      </div>
+      <pre id="consoleOut" class="console-out"></pre>
     </section>
 
     <!-- Modal: выбор процесса (в духе Cheat Engine) -->

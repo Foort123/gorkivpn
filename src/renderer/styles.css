@@ -653,24 +653,44 @@ textarea {
   display: none !important;
 }
 
+/* Консоль. Карточку даёт .profile-section, здесь только сам лог. */
+.console-out {
+  max-height: 200px;
+  overflow-y: auto;
+  margin: 0;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* глобальный `* { user-select: none }` иначе не даёт выделить лог мышью */
+  user-select: text;
+  cursor: text;
+}
+
 /* Тонкие скроллбары только внутри списков - общего ползунка у окна нет */
 .profile-list::-webkit-scrollbar,
-.proc-list::-webkit-scrollbar {
+.proc-list::-webkit-scrollbar,
+.console-out::-webkit-scrollbar {
   width: 5px;
 }
 
 .profile-list::-webkit-scrollbar-track,
-.proc-list::-webkit-scrollbar-track {
+.proc-list::-webkit-scrollbar-track,
+.console-out::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .profile-list::-webkit-scrollbar-thumb,
-.proc-list::-webkit-scrollbar-thumb {
+.proc-list::-webkit-scrollbar-thumb,
+.console-out::-webkit-scrollbar-thumb {
   background: rgba(255, 122, 24, 0.35);
   border-radius: 3px;
 }
 
 .profile-list::-webkit-scrollbar-thumb:hover,
-.proc-list::-webkit-scrollbar-thumb:hover {
+.proc-list::-webkit-scrollbar-thumb:hover,
+.console-out::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 122, 24, 0.6);
 }
