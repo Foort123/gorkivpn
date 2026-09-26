@@ -3,7 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const ProxyManager = require('./proxy-manager');
-const { DEFAULT_SERVER, parseSSUrl, generateSingBoxConfig } = require('./config-parser');
+const { DEFAULT_SERVER, DEFAULT_SUB_URL, parseProxyUrl, parseSSUrl, fetchSubscription, generateSingBoxConfig } = require('./config-parser');
 const { listProcesses } = require('./processes');
 
 // Новый логотип GORKIVPN — многоразмерный .ico для окна и трея
@@ -232,15 +232,16 @@ app.whenReady().then(() => {
     let newProfile = null;
 
     if (profileData.ssUrl) {
-      newProfile = parseSSUrl(profileData.ssUrl);
+      newProfile = parseProxyUrl(profileData.ssUrl);
       if (!newProfile) {
-        throw new Error('Invalid ss:// key URL format');
+        throw new Error('Неверный формат ключа/ссылки (поддерживаются ss://, vless://, vmess://, trojan://)');
       }
       newProfile.id = 'prof-' + Date.now();
     } else {
       newProfile = {
         id: profileData.id || 'prof-' + Date.now(),
         name: profileData.name || 'Свой сервер',
+        protocol: profileData.protocol || 'shadowsocks',
         server: profileData.server,
         port: parseInt(profileData.port, 10),
         cipher: profileData.cipher || 'aes-256-gcm',
@@ -251,6 +252,34 @@ app.whenReady().then(() => {
     profiles.push(newProfile);
     saveProfiles(profiles);
     return profiles;
+  });
+
+  ipcMain.handle('fetch-subscription', async (event, subUrl) => {
+    try {
+      const targetUrl = subUrl || DEFAULT_SUB_URL;
+      const newNodes = await fetchSubscription(targetUrl);
+      if (!newNodes || newNodes.length === 0) {
+        throw new Error('Подписка пуста или не содержит поддерживаемых узлов');
+      }
+
+      let profiles = loadProfiles();
+      // Заменяем старые ноды подписки на свежие
+      profiles = profiles.filter(p => !p.isSubscription);
+      profiles = [...profiles, ...newNodes];
+      saveProfiles(profiles);
+
+      return {
+        success: true,
+        count: newNodes.length,
+        profiles
+      };
+    } catch (err) {
+      console.error('Subscription error in main:', err);
+      return {
+        success: false,
+        error: err.message
+      };
+    }
   });
 
   ipcMain.handle('delete-profile', async (event, profileId) => {

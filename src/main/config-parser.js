@@ -1,9 +1,9 @@
 const net = require('net');
 const dns = require('dns').promises;
+const https = require('https');
+const http = require('http');
 
-// Единственный источник правды по серверу по умолчанию. Раньше эти четыре значения
-// лежали копиями в index.js, config-parser.js и трёх отладочных скриптах — при каждом
-// переезде часть копий забывали, и клиент шёл на снесённый хост со старым паролем.
+// Единственный источник правды по серверу по умолчанию.
 const DEFAULT_SERVER = {
   server: 'altaria.proxy.rlwy.net',
   port: 15525,
@@ -11,80 +11,300 @@ const DEFAULT_SERVER = {
   password: 'nkpbu-irWFX-snzju-M5WQr-zqQr6'
 };
 
+const DEFAULT_SUB_URL = 'https://gorkihor-sudo.github.io/vpn-sub/sub.txt';
+
 /**
- * Parses an ss:// URI or raw object into standard proxy options
+ * Universal proxy URL parser: parses ss://, vless://, vmess://, trojan://
  */
-function parseSSUrl(ssUrl) {
-  if (!ssUrl || typeof ssUrl !== 'string') return null;
+function parseProxyUrl(line) {
+  if (!line || typeof line !== 'string') return null;
+  line = line.trim();
+
   try {
-    let cleanUrl = ssUrl.trim();
-    let tag = 'Railway VPN';
-
-    if (cleanUrl.includes('#')) {
-      const parts = cleanUrl.split('#');
-      cleanUrl = parts[0];
-      tag = decodeURIComponent(parts[1]) || tag;
-    }
-
-    if (!cleanUrl.startsWith('ss://')) return null;
-    const body = cleanUrl.replace('ss://', '');
-
-    // Check if format is ss://BASE64@host:port or ss://BASE64
-    if (body.includes('@')) {
-      const [userinfoB64, hostPort] = body.split('@');
-      const decodedUserinfo = Buffer.from(userinfoB64, 'base64').toString('utf-8');
-      const [method, password] = decodedUserinfo.split(':');
-      const [server, portStr] = hostPort.split(':');
-      const port = parseInt(portStr, 10);
-
-      return {
-        name: tag,
-        server,
-        port,
-        cipher: method,
-        password
-      };
-    } else {
-      // Legacy ss://BASE64 format
-      const decoded = Buffer.from(body, 'base64').toString('utf-8');
-      const match = decoded.match(/^([^:]+):([^@]+)@([^:]+):(\d+)$/);
-      if (match) {
-        return {
-          name: tag,
-          server: match[3],
-          port: parseInt(match[4], 10),
-          cipher: match[1],
-          password: match[2]
-        };
+    if (line.startsWith('ss://')) {
+      let cleanUrl = line;
+      let tag = 'Shadowsocks Server';
+      if (cleanUrl.includes('#')) {
+        const parts = cleanUrl.split('#');
+        cleanUrl = parts[0];
+        tag = decodeURIComponent(parts[1]) || tag;
       }
+      const body = cleanUrl.replace('ss://', '');
+      if (body.includes('@')) {
+        const [userinfoB64, hostPort] = body.split('@');
+        const decodedUserinfo = Buffer.from(userinfoB64, 'base64').toString('utf-8');
+        const [method, password] = decodedUserinfo.split(':');
+        const [server, portStr] = hostPort.split(':');
+        return {
+          protocol: 'shadowsocks',
+          name: tag,
+          server,
+          port: parseInt(portStr, 10),
+          cipher: method,
+          password
+        };
+      } else {
+        const decoded = Buffer.from(body, 'base64').toString('utf-8');
+        const match = decoded.match(/^([^:]+):([^@]+)@([^:]+):(\d+)$/);
+        if (match) {
+          return {
+            protocol: 'shadowsocks',
+            name: tag,
+            server: match[3],
+            port: parseInt(match[4], 10),
+            cipher: match[1],
+            password: match[2]
+          };
+        }
+      }
+    } else if (line.startsWith('vless://')) {
+      const url = new URL(line);
+      const tag = decodeURIComponent(url.hash.replace('#', '')) || 'VLESS Server';
+      const params = url.searchParams;
+      return {
+        protocol: 'vless',
+        name: tag,
+        server: url.hostname,
+        port: parseInt(url.port || '443', 10),
+        uuid: url.username,
+        flow: params.get('flow') || undefined,
+        tls: params.get('security') === 'tls' || params.get('security') === 'reality',
+        sni: params.get('sni') || url.hostname,
+        reality: params.get('security') === 'reality' ? {
+          public_key: params.get('pbk'),
+          short_id: params.get('sid')
+        } : undefined,
+        transport: params.get('type') === 'ws' ? {
+          type: 'ws',
+          path: params.get('path') || '/',
+          headers: params.get('host') ? { Host: params.get('host') } : undefined
+        } : undefined
+      };
+    } else if (line.startsWith('vmess://')) {
+      const b64 = line.replace('vmess://', '');
+      const jsonStr = Buffer.from(b64, 'base64').toString('utf-8');
+      const data = JSON.parse(jsonStr);
+      return {
+        protocol: 'vmess',
+        name: data.ps || 'VMess Server',
+        server: data.add,
+        port: parseInt(data.port, 10),
+        uuid: data.id,
+        cipher: data.scy || 'auto',
+        alterId: parseInt(data.aid || '0', 10),
+        tls: data.tls === 'tls',
+        sni: data.sni || data.host || data.add,
+        transport: data.net === 'ws' ? {
+          type: 'ws',
+          path: data.path || '/',
+          headers: data.host ? { Host: data.host } : undefined
+        } : undefined
+      };
+    } else if (line.startsWith('trojan://')) {
+      const url = new URL(line);
+      const tag = decodeURIComponent(url.hash.replace('#', '')) || 'Trojan Server';
+      const params = url.searchParams;
+      return {
+        protocol: 'trojan',
+        name: tag,
+        server: url.hostname,
+        port: parseInt(url.port || '443', 10),
+        password: url.username,
+        tls: true,
+        sni: params.get('sni') || url.hostname,
+        transport: params.get('type') === 'ws' ? {
+          type: 'ws',
+          path: params.get('path') || '/',
+          headers: (params.get('host') || params.get('Host')) ? { Host: params.get('host') || params.get('Host') } : undefined
+        } : undefined
+      };
     }
   } catch (err) {
-    console.error('Error parsing ss URL:', err);
+    console.error('Error parsing proxy URL:', line.slice(0, 30), err.message);
   }
   return null;
 }
 
 /**
+ * Parses an ss:// URI (legacy alias for backward compatibility)
+ */
+function parseSSUrl(ssUrl) {
+  return parseProxyUrl(ssUrl);
+}
+
+/**
+ * Downloads URL content with redirect support
+ */
+function fetchUrl(url, timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    const client = url.startsWith('https:') ? https : http;
+    const req = client.get(url, {
+      headers: {
+        'User-Agent': 'v2rayNG/1.8.5 (Windows NT 10.0; Win64; x64)',
+        'Accept': '*/*'
+      },
+      timeout: timeoutMs
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return resolve(fetchUrl(res.headers.location, timeoutMs));
+      }
+      if (res.statusCode !== 200) {
+        return reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+      }
+      let rawData = '';
+      res.on('data', chunk => rawData += chunk);
+      res.on('end', () => resolve(rawData));
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Connection timed out'));
+    });
+    req.on('error', reject);
+  });
+}
+
+/**
+ * Fetches and parses a subscription URL (Base64 or plaintext lines)
+ */
+async function fetchSubscription(subUrl = DEFAULT_SUB_URL) {
+  let content = '';
+  try {
+    content = await fetchUrl(subUrl);
+  } catch (err) {
+    // If GitHub Pages is unreachable, try raw github fallback
+    if (subUrl.includes('gorkihor-sudo.github.io')) {
+      const fallback = 'https://raw.githubusercontent.com/gorkihor-sudo/vpn-sub/main/sub.txt';
+      console.log('Trying fallback subscription URL:', fallback);
+      content = await fetchUrl(fallback);
+    } else {
+      throw err;
+    }
+  }
+
+  content = content.trim();
+  let lines = [];
+  try {
+    const decoded = Buffer.from(content, 'base64').toString('utf-8');
+    if (decoded.includes('://')) {
+      lines = decoded.split(/\r?\n/);
+    } else {
+      lines = content.split(/\r?\n/);
+    }
+  } catch (e) {
+    lines = content.split(/\r?\n/);
+  }
+
+  const profiles = [];
+  let index = 1;
+  for (const line of lines) {
+    const parsed = parseProxyUrl(line);
+    if (parsed && parsed.server) {
+      profiles.push({
+        id: `gh-sub-${Date.now()}-${index++}`,
+        ...parsed,
+        isSubscription: true
+      });
+    }
+  }
+
+  return profiles;
+}
+
+/**
  * Generates sing-box JSON config object (schema: sing-box 1.13+)
- * @param {{exe: string}[]} excluded - приложения, которые целиком идут мимо VPN
+ * Supports Shadowsocks, VLESS, VMess, and Trojan outbounds
  */
 async function generateSingBoxConfig(profile, excluded = []) {
+  const protocol = (profile.protocol || profile.type || 'shadowsocks').toLowerCase();
   const server = profile.server || DEFAULT_SERVER.server;
   const port = parseInt(profile.port || DEFAULT_SERVER.port, 10);
-  const cipher = profile.cipher || DEFAULT_SERVER.cipher;
-  const password = profile.password || DEFAULT_SERVER.password;
-
   const bypass = excluded.filter(e => e && e.exe).map(e => e.exe);
 
-  // Собственные соединения sing-box к SS-серверу нельзя пускать обратно в туннель.
-  // На Wi-Fi auto_detect_interface этого не обеспечивает: пакеты уходят с LAN-адреса,
-  // всё равно затягиваются в TUN и проксируются снова — петля выжирает эфемерные порты
-  // (в логе с чужой машины: 671k строк и "Only one usage of each socket address" за 57 с).
   let serverIps = [];
   try {
     serverIps = net.isIP(server) ? [server] : await dns.resolve4(server);
   } catch (e) {
     console.error('Не удалось резолвить адрес сервера для direct-правила:', e.message);
+  }
+
+  // Construct sing-box outbound based on protocol
+  let proxyOutbound = null;
+
+  if (protocol === 'vless') {
+    proxyOutbound = {
+      type: 'vless',
+      tag: 'proxy',
+      server: serverIps[0] || server,
+      server_port: port,
+      uuid: profile.uuid || profile.password || 'de305d54-75b3-431b-a0ce-b8724def4f6b'
+    };
+    if (profile.flow) {
+      proxyOutbound.flow = profile.flow;
+    }
+    if (profile.tls) {
+      proxyOutbound.tls = {
+        enabled: true,
+        server_name: profile.sni || server,
+        insecure: true
+      };
+      if (profile.reality) {
+        proxyOutbound.tls.reality = {
+          enabled: true,
+          public_key: profile.reality.public_key,
+          short_id: profile.reality.short_id || ''
+        };
+      }
+    }
+    if (profile.transport) {
+      proxyOutbound.transport = profile.transport;
+    }
+  } else if (protocol === 'vmess') {
+    proxyOutbound = {
+      type: 'vmess',
+      tag: 'proxy',
+      server: serverIps[0] || server,
+      server_port: port,
+      uuid: profile.uuid || profile.password,
+      security: profile.cipher || 'auto',
+      alter_id: profile.alterId || 0
+    };
+    if (profile.tls) {
+      proxyOutbound.tls = {
+        enabled: true,
+        server_name: profile.sni || server,
+        insecure: true
+      };
+    }
+    if (profile.transport) {
+      proxyOutbound.transport = profile.transport;
+    }
+  } else if (protocol === 'trojan') {
+    proxyOutbound = {
+      type: 'trojan',
+      tag: 'proxy',
+      server: serverIps[0] || server,
+      server_port: port,
+      password: profile.password,
+      tls: {
+        enabled: true,
+        server_name: profile.sni || server,
+        insecure: true
+      }
+    };
+    if (profile.transport) {
+      proxyOutbound.transport = profile.transport;
+    }
+  } else {
+    // Default: Shadowsocks
+    proxyOutbound = {
+      type: 'shadowsocks',
+      tag: 'proxy',
+      server: serverIps[0] || server,
+      server_port: port,
+      method: profile.cipher || DEFAULT_SERVER.cipher,
+      password: profile.password || DEFAULT_SERVER.password
+    };
   }
 
   return {
@@ -94,22 +314,15 @@ async function generateSingBoxConfig(profile, excluded = []) {
     },
     dns: {
       servers: [
-        // DoT через прокси — весь DNS клиента после подключения
         { tag: "remote", type: "https", server: "1.1.1.1", detour: "proxy" },
-        // Резолвер для домена самого VPN-сервера и direct-приложений — системный.
-        // Хардкод udp 8.8.8.8 сюда не годится: у многих провайдеров UDP:53 наружу
-        // блокируется, домен VPN-сервера не резолвится и туннель не поднимается вовсе.
         { tag: "local", type: "local" }
       ],
       rules: [
-        // домен VPN-сервера резолвим локально (нужен до установки туннеля)
         { domain: [server], server: "local" },
-        // исключённые приложения резолвят локально, иначе получат чужую CDN-выдачу
         ...(bypass.length ? [{ process_name: bypass, server: "local" }] : []),
-        // весь остальной DNS — через прокси, только A-записи (TUN без IPv6)
         { query_type: ["A", "AAAA"], server: "remote", strategy: "ipv4_only" }
       ],
-      final: "local"  // fallback — прямой, если прокси ещё не поднят
+      final: "local"
     },
     inbounds: [
       {
@@ -118,34 +331,13 @@ async function generateSingBoxConfig(profile, excluded = []) {
         address: ["172.19.0.1/30"],
         mtu: 9000,
         auto_route: true,
-        // strict_route: false — если SS сервер недоступен, трафик идёт напрямую
-        // (с true весь интернет ломается при любой проблеме с SS)
         strict_route: false,
-        // Адрес SS-сервера вообще не должен попадать в маршруты TUN. Одного route-правила
-        // "ip_cidr -> direct" мало: пакет уже внутри туннеля, direct отправляет его снова,
-        // он снова перехватывается — петля остаётся, только без прокси. На машине с другими
-        // TUN-адаптерами (Tailscale, Radmin VPN) auto_detect_interface от этого не спасает.
         ...(serverIps.length ? { route_exclude_address: serverIps.map(ip => `${ip}/32`) } : {}),
-        // mixed: TCP через system-стек (стабильнее на Windows), UDP через gvisor
         stack: "mixed"
       }
     ],
     outbounds: [
-      {
-        // Домен, а не IP, здесь вешал подключение: sing-box резолвит адрес аутбаунда
-        // своим DNS, а транспорт "local" отвечает не на каждой машине — при зарезанном
-        // наружу UDP:53 запрос молча висит 10 с и соединение отваливается, хотя TCP до
-        // сервера проходит нормально. IP уже получен через резолвер Node выше (он же
-        // используется для anti-loop правил), им и подключаемся. Резолв происходит при
-        // каждом нажатии «Подключить», так что смена IP у Railway подхватится сама.
-        // Домен остаётся запасным вариантом, если резолв не удался.
-        type: "shadowsocks",
-        tag: "proxy",
-        server: serverIps[0] || server,
-        server_port: port,
-        method: cipher,
-        password: password
-      },
+      proxyOutbound,
       {
         type: "direct",
         tag: "direct"
@@ -153,25 +345,19 @@ async function generateSingBoxConfig(profile, excluded = []) {
     ],
     route: {
       auto_detect_interface: true,
-      // default_domain_resolver резолвит домены outbound'ов (SS-сервер задан доменом)
-      // strategy ipv4_only — TUN не имеет IPv6-маршрута
       default_domain_resolver: { server: "local", strategy: "ipv4_only" },
       final: "proxy",
       rules: [
-        // первым: трафик к самому SS-серверу всегда мимо туннеля, иначе петля
         ...(serverIps.length ? [{ ip_cidr: serverIps, outbound: "direct" }] : []),
         { port: 53, action: "hijack-dns" },
         { ip_is_private: true, outbound: "direct" },
-        // split tunneling: приложение целиком идёт напрямую, минуя туннель
         ...(bypass.length ? [{ process_name: bypass, outbound: "direct" }] : []),
         { network: "udp", port: 443, action: "reject" }
       ]
     },
-    // источник реального пинга (/proxies/proxy/delay) и скорости (ws /traffic)
     experimental: {
       clash_api: {
         external_controller: "127.0.0.1:9090",
-        // renderer грузится с file://, его Origin - "null"
         access_control_allow_origin: ["*"]
       }
     }
@@ -180,6 +366,9 @@ async function generateSingBoxConfig(profile, excluded = []) {
 
 module.exports = {
   DEFAULT_SERVER,
+  DEFAULT_SUB_URL,
   parseSSUrl,
+  parseProxyUrl,
+  fetchSubscription,
   generateSingBoxConfig
 };

@@ -46,11 +46,16 @@ const profileList = document.getElementById('profileList');
 const addKeyBtn = document.getElementById('addKeyBtn');
 const addModal = document.getElementById('addModal');
 const closeModalBtn = document.getElementById('closeModalBtn');
+const tabSub = document.getElementById('tabSub');
 const tabKey = document.getElementById('tabKey');
 const tabManual = document.getElementById('tabManual');
+const subForm = document.getElementById('subForm');
 const keyForm = document.getElementById('keyForm');
 const manualForm = document.getElementById('manualForm');
+const subUrlInput = document.getElementById('subUrlInput');
+const btnSubmitSub = document.getElementById('btnSubmitSub');
 const refreshPingBtn = document.getElementById('refreshPingBtn');
+const syncSubBtn = document.getElementById('syncSubBtn');
 
 // Split tunneling Elements
 const addExcludeBtn = document.getElementById('addExcludeBtn');
@@ -116,10 +121,14 @@ function renderProfiles() {
   profiles.forEach(p => {
     const item = document.createElement('div');
     item.className = `profile-item ${activeProfile && activeProfile.id === p.id ? 'active' : ''}`;
+    const proto = (p.protocol || 'SS').toUpperCase();
     
     item.innerHTML = `
       <div class="profile-info">
-        <span class="profile-name">${p.name || 'Shadowsocks VPN'}</span>
+        <span class="profile-name">
+          <span style="font-size:0.65rem; padding:2px 6px; border-radius:4px; margin-right:6px; background:rgba(255,122,24,0.18); color:var(--primary-glow); font-weight:700;">${proto}</span>
+          ${p.name || 'VPN Сервер'}
+        </span>
         <span class="profile-host">${p.server}:${p.port}</span>
       </div>
       <span class="profile-ping" id="ping-${p.id}">-- ms</span>
@@ -360,21 +369,51 @@ closeModalBtn.addEventListener('click', () => {
   addModal.classList.add('hidden');
 });
 
-tabKey.addEventListener('click', () => {
-  tabKey.classList.add('active');
-  tabManual.classList.remove('active');
-  keyForm.classList.add('active');
-  manualForm.classList.remove('active');
-});
+function switchTab(activeTab, activeForm) {
+  [tabSub, tabKey, tabManual].forEach(t => t && t.classList.remove('active'));
+  [subForm, keyForm, manualForm].forEach(f => f && f.classList.remove('active'));
+  if (activeTab) activeTab.classList.add('active');
+  if (activeForm) activeForm.classList.add('active');
+}
 
-tabManual.addEventListener('click', () => {
-  tabManual.classList.add('active');
-  tabKey.classList.remove('active');
-  manualForm.classList.add('active');
-  keyForm.classList.remove('active');
-});
+if (tabSub) tabSub.addEventListener('click', () => switchTab(tabSub, subForm));
+tabKey.addEventListener('click', () => switchTab(tabKey, keyForm));
+tabManual.addEventListener('click', () => switchTab(tabManual, manualForm));
 
 // Submit Forms
+if (subForm) {
+  subForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = subUrlInput ? subUrlInput.value.trim() : '';
+    if (btnSubmitSub) {
+      btnSubmitSub.disabled = true;
+      btnSubmitSub.textContent = 'Загрузка серверов...';
+    }
+
+    try {
+      const res = await ipcRenderer.invoke('fetch-subscription', url);
+      if (res.success) {
+        profiles = res.profiles;
+        const firstSub = profiles.find(p => p.isSubscription);
+        if (firstSub) activeProfile = firstSub;
+        renderProfiles();
+        addModal.classList.add('hidden');
+        checkPing();
+        alert(`Успешно загружено ${res.count} рабочих узлов из GitHub Pages!`);
+      } else {
+        alert(`Ошибка загрузки: ${res.error}`);
+      }
+    } catch (err) {
+      alert(`Ошибка: ${err.message}`);
+    } finally {
+      if (btnSubmitSub) {
+        btnSubmitSub.disabled = false;
+        btnSubmitSub.textContent = 'Загрузить серверы из GitHub';
+      }
+    }
+  });
+}
+
 keyForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   const ssUrl = document.getElementById('ssUrlInput').value.trim();
@@ -388,7 +427,7 @@ keyForm.addEventListener('submit', async (e) => {
     document.getElementById('ssUrlInput').value = '';
     checkPing();
   } catch (err) {
-    alert('Ошибка формата ключа ss://');
+    alert(err.message || 'Ошибка формата ключа');
   }
 });
 
@@ -414,6 +453,31 @@ manualForm.addEventListener('submit', async (e) => {
   addModal.classList.add('hidden');
   checkPing();
 });
+
+if (syncSubBtn) {
+  syncSubBtn.addEventListener('click', async () => {
+    syncSubBtn.disabled = true;
+    syncSubBtn.textContent = '⚡ Загрузка...';
+    try {
+      const res = await ipcRenderer.invoke('fetch-subscription');
+      if (res.success) {
+        profiles = res.profiles;
+        const firstSub = profiles.find(p => p.isSubscription);
+        if (firstSub) activeProfile = firstSub;
+        renderProfiles();
+        checkPing();
+        statusSubtext.textContent = `Обновлено: ${res.count} серверов с GitHub Pages`;
+      } else {
+        alert(`Не удалось загрузить: ${res.error}`);
+      }
+    } catch (err) {
+      alert(`Ошибка: ${err.message}`);
+    } finally {
+      syncSubBtn.disabled = false;
+      syncSubBtn.textContent = '⚡ GitHub VPN';
+    }
+  });
+}
 
 refreshPingBtn.addEventListener('click', () => {
   checkPing();

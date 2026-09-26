@@ -93,7 +93,10 @@
     <section class="profile-section">
       <div class="section-header">
         <span>Сервер подключений</span>
-        <button id="refreshPingBtn" class="text-btn">Тест пинга</button>
+        <div style="display:flex; gap:8px;">
+          <button id="syncSubBtn" class="text-btn" style="color:var(--primary-glow);" title="Загрузить/обновить узлы с GitHub Pages">⚡ GitHub VPN</button>
+          <button id="refreshPingBtn" class="text-btn">Тест пинга</button>
+        </div>
       </div>
       <div id="profileList" class="profile-list">
         <!-- Profiles rendered dynamically -->
@@ -134,13 +137,23 @@
         </div>
         <div class="modal-body">
           <div class="tab-buttons">
-            <button id="tabKey" class="tab-btn active">ss:// Ключ / URL</button>
-            <button id="tabManual" class="tab-btn">Вручную (Railway)</button>
+            <button id="tabSub" class="tab-btn active">⚡ GitHub VPN</button>
+            <button id="tabKey" class="tab-btn">Ключ / Ссылка</button>
+            <button id="tabManual" class="tab-btn">Вручную</button>
           </div>
 
-          <form id="keyForm" class="tab-content active">
-            <label>Вставьте ss:// ключ Outline / Shadowsocks</label>
-            <textarea id="ssUrlInput" placeholder="ss://BASE64(метод:пароль)@somename.proxy.rlwy.net:15525#Railway%20VPN"></textarea>
+          <form id="subForm" class="tab-content active">
+            <label>Ссылка на подписку GitHub Pages</label>
+            <input type="text" id="subUrlInput" class="proc-search" style="margin-bottom:8px; font-size:0.85rem;" value="https://gorkihor-sudo.github.io/vpn-sub/sub.txt" placeholder="https://gorkihor-sudo.github.io/vpn-sub/sub.txt">
+            <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:14px; line-height:1.4;">
+              Загрузит все актуальные рабочие серверы (VLESS, Shadowsocks, Trojan, WARP) прямо из репозитория GitHub Pages.
+            </p>
+            <button type="submit" id="btnSubmitSub" class="submit-btn">Загрузить серверы из GitHub</button>
+          </form>
+
+          <form id="keyForm" class="tab-content">
+            <label>Вставьте ключ или ссылку (ss://, vless://, vmess://, trojan://)</label>
+            <textarea id="ssUrlInput" placeholder="ss://... или vless://... или trojan://..."></textarea>
             <button type="submit" class="submit-btn">Импортировать ключ</button>
           </form>
 
