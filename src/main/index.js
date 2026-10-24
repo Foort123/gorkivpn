@@ -3,7 +3,16 @@ const path = require('path');
 const fs = require('fs');
 const { execSync } = require('child_process');
 const ProxyManager = require('./proxy-manager');
-const { DEFAULT_SERVER, DEFAULT_SUB_URL, parseProxyUrl, parseSSUrl, fetchSubscription, generateSingBoxConfig } = require('./config-parser');
+const {
+  DEFAULT_SERVER,
+  DEFAULT_SUB_URL,
+  BUNDLED_PROFILES,
+  getBundledProfiles,
+  parseProxyUrl,
+  parseSSUrl,
+  fetchSubscription,
+  generateSingBoxConfig
+} = require('./config-parser');
 const { listProcesses } = require('./processes');
 
 // Новый логотип GORKIVPN — многоразмерный .ico для окна и трея
@@ -58,48 +67,84 @@ const profilesFilePath = path.join(app.getPath('userData'), 'vpn_profiles.json')
 
 // Профиль по умолчанию
 const defaultProfile = {
-  id: 'railway-default-1',
-  name: 'GORKIVPN',
-  ...DEFAULT_SERVER,
-  isDefault: true
+  id: 'edge-tcp-8443',
+  name: '⚡ GORKIVPN | Cloudflare Edge (Port 8443)',
+  protocol: 'vless',
+  server: 'edge-tcp-gateway.pages.dev',
+  port: 8443,
+  uuid: '631c15ae-3f60-4019-9df6-7e94063fc151',
+  tls: true,
+  sni: 'edge-tcp-gateway.pages.dev',
+  fingerprint: 'chrome',
+  transport: {
+    type: 'ws',
+    path: '/ws',
+    headers: { Host: 'edge-tcp-gateway.pages.dev' }
+  },
+  country: 'Cloudflare Edge',
+  flag: '⚡',
+  isDefault: true,
+  isBundled: true
 };
 
-// Хосты прошлых переездов: профиль с любым из них считаем устаревшим и переписываем
+// Хосты прошлых переездов: профиль с любым из них считаем устаревшим и вычищаем
 const LEGACY_SERVERS = [
+  'altaria.proxy.rlwy.net',
   'vpn-production-9f65.up.railway.app',
   'trolley.proxy.rlwy.net',
   'sakura.proxy.rlwy.net',
-  'hayabusa.proxy.rlwy.net'
+  'hayabusa.proxy.rlwy.net',
+  '45.130.125.158',
+  'render.com',
+  'www.darkroom.lol',
+  '141.101.90.1',
+  '188.114.96.1',
+  '188.114.96.2',
+  '104.19.155.155',
+  '188.114.97.1',
+  '104.16.132.229',
+  '202.78.162.5'
 ];
 
 function loadProfiles() {
+  const bundled = getBundledProfiles();
   try {
     if (fs.existsSync(profilesFilePath)) {
-      const data = JSON.parse(fs.readFileSync(profilesFilePath, 'utf-8'));
+      let data = JSON.parse(fs.readFileSync(profilesFilePath, 'utf-8'));
       if (Array.isArray(data) && data.length > 0) {
-        let changed = false;
-        data.forEach(p => {
-          if (p.isDefault || LEGACY_SERVERS.includes(p.server)) {
-            // Пароль и метод переписываем тоже: при переезде на новый аккаунт Railway
-            // меняется и PASSWORD. Раньше мигрировались только server/port, и у всех,
-            // кто уже поставил клиент, оставался пароль от снесённого сервера.
-            p.server = defaultProfile.server;
-            p.port = defaultProfile.port;
-            p.cipher = defaultProfile.cipher;
-            p.password = defaultProfile.password;
-            changed = true;
-          }
-        });
-        if (changed) {
+        // Оставляем только актуальный узел edge-tcp-gateway.pages.dev или добавленные пользователем вручную
+        data = data.filter(p => 
+          p && 
+          !LEGACY_SERVERS.includes(p.server) && 
+          p.sni !== 'www.ignitelimit.com' &&
+          p.port > 0 &&
+          (p.server === 'edge-tcp-gateway.pages.dev' || (!p.isSubscription && !p.isBundled && !p.isDefault))
+        );
+
+        // Пользовательские узлы (добавленные вручную)
+        const custom = data.filter(p => !p.isSubscription && !p.isBundled && !p.isDefault);
+        
+        // Гарантируем, что проверенные быстрые узлы всегда в начале
+        const otherNodes = data.filter(p => 
+          (p.isSubscription || p.isBundled) && 
+          !bundled.some(b => b.server === p.server && b.port === p.port)
+        );
+        data = [...custom, ...bundled, ...otherNodes];
+
+        if (data.length > 0) {
           saveProfiles(data);
+          return data;
         }
-        return data;
       }
     }
   } catch (e) {
     console.error('Failed reading stored profiles:', e);
   }
-  return [defaultProfile];
+
+  // Если файл профилей пуст или отсутствует, отдаем вшитые узлы GitHub
+  const initialProfiles = bundled.length > 0 ? bundled : [defaultProfile];
+  saveProfiles(initialProfiles);
+  return initialProfiles;
 }
 
 function saveProfiles(profiles) {
@@ -222,6 +267,34 @@ app.whenReady().then(() => {
   createWindow();
   createTray();
 
+  // Фоновая синхронизация с GitHub при запуске (без блокировки UI)
+  setTimeout(async () => {
+    try {
+      console.log('Фоновая проверка обновлений узлов с GitHub...');
+      const targetUrl = DEFAULT_SUB_URL;
+      const newNodes = await fetchSubscription(targetUrl);
+      if (newNodes && newNodes.length > 0) {
+        const filteredNew = newNodes.filter(p => 
+          p && 
+          p.sni !== 'www.ignitelimit.com' && 
+          !LEGACY_SERVERS.includes(p.server)
+        );
+        let current = loadProfiles();
+        const custom = current.filter(p => !p.isSubscription && !p.isBundled && !p.isDefault);
+        const bundled = getBundledProfiles();
+        // Вшитые проверенные узлы всегда в топе, затем новые из подписки
+        const updated = [...custom, ...bundled, ...filteredNew.filter(n => !bundled.some(b => b.server === n.server && b.port === n.port))];
+        saveProfiles(updated);
+        console.log(`Фоновое обновление: получено ${updated.length} узлов`);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('profiles-updated', updated);
+        }
+      }
+    } catch (e) {
+      console.log('Фоновое обновление с GitHub отложено:', e.message);
+    }
+  }, 2500);
+
   // Handle IPC calls
   ipcMain.handle('get-profiles', async () => {
     return loadProfiles();
@@ -263,9 +336,9 @@ app.whenReady().then(() => {
       }
 
       let profiles = loadProfiles();
-      // Заменяем старые ноды подписки на свежие
-      profiles = profiles.filter(p => !p.isSubscription);
-      profiles = [...profiles, ...newNodes];
+      // Заменяем старые ноды подписки и вшитые узлы на свежие
+      const custom = profiles.filter(p => !p.isSubscription && !p.isBundled);
+      profiles = [...custom, ...newNodes];
       saveProfiles(profiles);
 
       return {

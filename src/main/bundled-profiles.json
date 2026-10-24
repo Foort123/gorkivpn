@@ -1,0 +1,25 @@
+[
+  {
+    "id": "edge-tcp-8443",
+    "protocol": "vless",
+    "name": "⚡ GORKIVPN | Cloudflare Edge (Port 8443)",
+    "server": "edge-tcp-gateway.pages.dev",
+    "port": 8443,
+    "uuid": "631c15ae-3f60-4019-9df6-7e94063fc151",
+    "tls": true,
+    "sni": "edge-tcp-gateway.pages.dev",
+    "fingerprint": "chrome",
+    "transport": {
+      "type": "ws",
+      "path": "/ws",
+      "headers": {
+        "Host": "edge-tcp-gateway.pages.dev"
+      }
+    },
+    "country": "Cloudflare Edge",
+    "flag": "⚡",
+    "isSubscription": false,
+    "isBundled": true,
+    "initialPing": 50
+  }
+]

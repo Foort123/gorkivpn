@@ -96,7 +96,13 @@ async function init() {
   updateUIState();
   renderProfiles();
   renderExcluded();
-  checkPing();
+
+  // Автоматический замер и сортировка по лучшему пингу при старте
+  if (!isConnected) {
+    setTimeout(pingAllProfilesAndSort, 400);
+  } else {
+    checkPing();
+  }
 }
 
 function updateUIState() {
@@ -115,6 +121,21 @@ function updateUIState() {
   }
 }
 
+function getPingBadge(p) {
+  if (typeof p.ping === 'number') {
+    if (p.ping > 0 && p.ping < 120) {
+      return `<span class="profile-ping" id="ping-${p.id}" style="color:#10b981; font-weight:700;">⚡ ${p.ping} ms</span>`;
+    } else if (p.ping > 0 && p.ping < 250) {
+      return `<span class="profile-ping" id="ping-${p.id}" style="color:#f59e0b; font-weight:600;">${p.ping} ms</span>`;
+    } else if (p.ping > 0) {
+      return `<span class="profile-ping" id="ping-${p.id}" style="color:#ef4444;">${p.ping} ms</span>`;
+    } else if (p.ping === -1) {
+      return `<span class="profile-ping" id="ping-${p.id}" style="color:var(--text-muted); opacity:0.6;">Таймаут</span>`;
+    }
+  }
+  return `<span class="profile-ping" id="ping-${p.id}">-- ms</span>`;
+}
+
 function renderProfiles() {
   profileList.innerHTML = '';
 
@@ -131,7 +152,7 @@ function renderProfiles() {
         </span>
         <span class="profile-host">${p.server}:${p.port}</span>
       </div>
-      <span class="profile-ping" id="ping-${p.id}">-- ms</span>
+      ${getPingBadge(p)}
     `;
 
     item.addEventListener('click', () => {
@@ -146,15 +167,79 @@ function renderProfiles() {
   });
 }
 
-// В подключённом состоянии TCP-пинг из Electron сам идёт через туннель и удваивается,
-// поэтому замер отдаёт sing-box: реальный RTT до gstatic через прокси.
+let isPingingAll = false;
+
+// Замер всех серверов и сортировка: лучший пинг и связь — сверху
+async function pingAllProfilesAndSort() {
+  if (isConnected) {
+    checkPing();
+    return;
+  }
+  if (isPingingAll) return;
+  isPingingAll = true;
+
+  if (refreshPingBtn) {
+    refreshPingBtn.disabled = true;
+    refreshPingBtn.textContent = 'Замер...';
+  }
+
+  try {
+    // Параллельный замер доступности всех серверов
+    await Promise.all(profiles.map(async (p) => {
+      try {
+        const ms = await ipcRenderer.invoke('ping-server', { server: p.server, port: p.port });
+        p.ping = ms > 0 ? ms : -1;
+      } catch (e) {
+        p.ping = -1;
+      }
+    }));
+
+    // Сортировка: лучшие серверы (минимальный пинг) наверх, таймауты вниз
+    profiles.sort((a, b) => {
+      const pa = (typeof a.ping === 'number' && a.ping > 0) ? a.ping : 99999;
+      const pb = (typeof b.ping === 'number' && b.ping > 0) ? b.ping : 99999;
+      return pa - pb;
+    });
+
+    if (!isConnected && profiles.length > 0) {
+      if (!activeProfile || activeProfile.ping === -1 || !profiles.some(p => p.id === activeProfile.id)) {
+        activeProfile = profiles[0];
+      }
+    }
+
+    renderProfiles();
+
+    if (activeProfile && activeProfile.ping > 0) {
+      pingValue.textContent = `${activeProfile.ping} ms`;
+    }
+  } catch (err) {
+    console.error('Error in pingAllProfilesAndSort:', err);
+  } finally {
+    isPingingAll = false;
+    if (refreshPingBtn) {
+      refreshPingBtn.disabled = false;
+      refreshPingBtn.textContent = 'Тест пинга';
+    }
+  }
+}
+
+// В подключённом состоянии замер отдаёт sing-box через clash_api (HTTP 204 до Cloudflare)
 async function measureLatency() {
   if (isConnected) {
-    const url = encodeURIComponent('http://www.gstatic.com/generate_204');
-    const res = await fetch(`${CLASH_API}/proxies/proxy/delay?timeout=3000&url=${url}`);
-    if (!res.ok) return -1;
-    const data = await res.json();
-    return data.delay > 0 ? data.delay : -1;
+    try {
+      const url = encodeURIComponent('http://cp.cloudflare.com/generate_204');
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+      const res = await fetch(`${CLASH_API}/proxies/proxy/delay?timeout=3000&url=${url}`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) return -1;
+      const data = await res.json();
+      return data.delay > 0 ? data.delay : -1;
+    } catch (e) {
+      return -1;
+    }
   }
   if (!activeProfile) return -1;
   return ipcRenderer.invoke('ping-server', {
@@ -175,14 +260,22 @@ async function checkPing() {
   }
 
   if (latency > 0) {
+    activeProfile.ping = latency;
     pingValue.textContent = `${latency} ms`;
     const pingBadge = document.getElementById(`ping-${activeProfile.id}`);
-    if (pingBadge) pingBadge.textContent = `${latency} ms`;
+    if (pingBadge) {
+      pingBadge.textContent = latency < 120 ? `⚡ ${latency} ms` : `${latency} ms`;
+      pingBadge.style.color = latency < 120 ? '#10b981' : (latency < 250 ? '#f59e0b' : '#ef4444');
+    }
+    if (isConnected) {
+      statusSubtext.textContent = `Подключено к ${activeProfile.name}`;
+    }
   } else {
+    activeProfile.ping = -1;
     pingValue.textContent = 'Таймаут';
-    // Туннель поднят, а трафик не ходит — сам по себе "Таймаут" ничего не объясняет,
-    // поэтому показываем, куда смотреть: в лог sing-box с реальной причиной.
-    if (isConnected && logPath) statusSubtext.textContent = `Сервер не отвечает. Лог: ${logPath}`;
+    if (isConnected) {
+      statusSubtext.textContent = `Сервер не отвечает. Попробуйте другой сервер из списка.`;
+    }
   }
 }
 
@@ -465,8 +558,8 @@ if (syncSubBtn) {
         const firstSub = profiles.find(p => p.isSubscription);
         if (firstSub) activeProfile = firstSub;
         renderProfiles();
-        checkPing();
         statusSubtext.textContent = `Обновлено: ${res.count} серверов с GitHub Pages`;
+        pingAllProfilesAndSort();
       } else {
         alert(`Не удалось загрузить: ${res.error}`);
       }
@@ -480,13 +573,30 @@ if (syncSubBtn) {
 }
 
 refreshPingBtn.addEventListener('click', () => {
-  checkPing();
+  pingAllProfilesAndSort();
 });
 
 // Listen for system status updates
 ipcRenderer.on('status-changed', (event, data) => {
   isConnected = data.isConnected;
   updateUIState();
+});
+
+// Автоматическое обновление списка серверов при фоновой синхронизации с GitHub
+ipcRenderer.on('profiles-updated', (event, updatedProfiles) => {
+  if (Array.isArray(updatedProfiles) && updatedProfiles.length > 0) {
+    profiles = updatedProfiles;
+    if (!activeProfile || !profiles.some(p => p.id === activeProfile.id)) {
+      activeProfile = profiles[0];
+    }
+    renderProfiles();
+    if (!isConnected) {
+      statusSubtext.textContent = `Синхронизировано: ${profiles.length} серверов с GitHub`;
+      pingAllProfilesAndSort();
+    } else {
+      checkPing();
+    }
+  }
 });
 
 // Переключение из трея: жмём ту же кнопку, что и мышью в окне, чтобы не

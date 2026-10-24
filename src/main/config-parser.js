@@ -2,16 +2,52 @@ const net = require('net');
 const dns = require('dns').promises;
 const https = require('https');
 const http = require('http');
+const path = require('path');
+const fs = require('fs');
 
-// Единственный источник правды по серверу по умолчанию.
+// Вшитые узлы из репозитория GitHub
+let BUNDLED_PROFILES = [];
+try {
+  const bundledPath = path.join(__dirname, 'bundled-profiles.json');
+  if (fs.existsSync(bundledPath)) {
+    BUNDLED_PROFILES = JSON.parse(fs.readFileSync(bundledPath, 'utf-8'));
+  }
+} catch (e) {
+  console.error('Failed reading bundled profiles:', e);
+}
+
+function getBundledProfiles() {
+  if (BUNDLED_PROFILES && BUNDLED_PROFILES.length > 0) {
+    return JSON.parse(JSON.stringify(BUNDLED_PROFILES));
+  }
+  return [];
+}
+
+// Надежный сервер по умолчанию
 const DEFAULT_SERVER = {
-  server: 'altaria.proxy.rlwy.net',
-  port: 15525,
-  cipher: 'aes-256-gcm',
-  password: 'nkpbu-irWFX-snzju-M5WQr-zqQr6'
+  server: 'edge-tcp-gateway.pages.dev',
+  port: 8443,
+  protocol: 'vless',
+  uuid: '631c15ae-3f60-4019-9df6-7e94063fc151',
+  tls: true,
+  sni: 'edge-tcp-gateway.pages.dev',
+  transport: {
+    type: 'ws',
+    path: '/ws',
+    headers: { Host: 'edge-tcp-gateway.pages.dev' }
+  }
 };
 
 const DEFAULT_SUB_URL = 'https://gorkihor-sudo.github.io/vpn-sub/sub.txt';
+
+function cleanTag(str, fallback = 'VPN Server') {
+  if (!str) return fallback;
+  try {
+    return decodeURIComponent(str).replace(/\+/g, ' ').trim() || fallback;
+  } catch (e) {
+    return str.replace(/\+/g, ' ').trim() || fallback;
+  }
+}
 
 /**
  * Universal proxy URL parser: parses ss://, vless://, vmess://, trojan://
@@ -21,13 +57,14 @@ function parseProxyUrl(line) {
   line = line.trim();
 
   try {
+    let result = null;
     if (line.startsWith('ss://')) {
       let cleanUrl = line;
       let tag = 'Shadowsocks Server';
       if (cleanUrl.includes('#')) {
         const parts = cleanUrl.split('#');
         cleanUrl = parts[0];
-        tag = decodeURIComponent(parts[1]) || tag;
+        tag = cleanTag(parts[1], tag);
       }
       const body = cleanUrl.replace('ss://', '');
       if (body.includes('@')) {
@@ -35,7 +72,7 @@ function parseProxyUrl(line) {
         const decodedUserinfo = Buffer.from(userinfoB64, 'base64').toString('utf-8');
         const [method, password] = decodedUserinfo.split(':');
         const [server, portStr] = hostPort.split(':');
-        return {
+        result = {
           protocol: 'shadowsocks',
           name: tag,
           server,
@@ -47,7 +84,7 @@ function parseProxyUrl(line) {
         const decoded = Buffer.from(body, 'base64').toString('utf-8');
         const match = decoded.match(/^([^:]+):([^@]+)@([^:]+):(\d+)$/);
         if (match) {
-          return {
+          result = {
             protocol: 'shadowsocks',
             name: tag,
             server: match[3],
@@ -59,9 +96,10 @@ function parseProxyUrl(line) {
       }
     } else if (line.startsWith('vless://')) {
       const url = new URL(line);
-      const tag = decodeURIComponent(url.hash.replace('#', '')) || 'VLESS Server';
+      const rawTag = url.hash ? url.hash.replace('#', '') : '';
+      const tag = cleanTag(rawTag, 'VLESS Server');
       const params = url.searchParams;
-      return {
+      result = {
         protocol: 'vless',
         name: tag,
         server: url.hostname,
@@ -70,6 +108,7 @@ function parseProxyUrl(line) {
         flow: params.get('flow') || undefined,
         tls: params.get('security') === 'tls' || params.get('security') === 'reality',
         sni: params.get('sni') || url.hostname,
+        fingerprint: params.get('fp') || 'chrome',
         reality: params.get('security') === 'reality' ? {
           public_key: params.get('pbk'),
           short_id: params.get('sid')
@@ -77,16 +116,16 @@ function parseProxyUrl(line) {
         transport: params.get('type') === 'ws' ? {
           type: 'ws',
           path: params.get('path') || '/',
-          headers: params.get('host') ? { Host: params.get('host') } : undefined
+          headers: { Host: params.get('host') || params.get('Host') || params.get('sni') || url.hostname }
         } : undefined
       };
     } else if (line.startsWith('vmess://')) {
       const b64 = line.replace('vmess://', '');
       const jsonStr = Buffer.from(b64, 'base64').toString('utf-8');
       const data = JSON.parse(jsonStr);
-      return {
+      result = {
         protocol: 'vmess',
-        name: data.ps || 'VMess Server',
+        name: cleanTag(data.ps, 'VMess Server'),
         server: data.add,
         port: parseInt(data.port, 10),
         uuid: data.id,
@@ -97,14 +136,15 @@ function parseProxyUrl(line) {
         transport: data.net === 'ws' ? {
           type: 'ws',
           path: data.path || '/',
-          headers: data.host ? { Host: data.host } : undefined
+          headers: { Host: data.host || data.sni || data.add }
         } : undefined
       };
     } else if (line.startsWith('trojan://')) {
       const url = new URL(line);
-      const tag = decodeURIComponent(url.hash.replace('#', '')) || 'Trojan Server';
+      const rawTag = url.hash ? url.hash.replace('#', '') : '';
+      const tag = cleanTag(rawTag, 'Trojan Server');
       const params = url.searchParams;
-      return {
+      result = {
         protocol: 'trojan',
         name: tag,
         server: url.hostname,
@@ -115,9 +155,13 @@ function parseProxyUrl(line) {
         transport: params.get('type') === 'ws' ? {
           type: 'ws',
           path: params.get('path') || '/',
-          headers: (params.get('host') || params.get('Host')) ? { Host: params.get('host') || params.get('Host') } : undefined
+          headers: { Host: params.get('host') || params.get('Host') || params.get('sni') || url.hostname }
         } : undefined
       };
+    }
+
+    if (result && result.server && !isNaN(result.port) && result.port > 0 && result.port <= 65535) {
+      return result;
     }
   } catch (err) {
     console.error('Error parsing proxy URL:', line.slice(0, 30), err.message);
@@ -215,8 +259,8 @@ async function fetchSubscription(subUrl = DEFAULT_SUB_URL) {
  * Generates sing-box JSON config object (schema: sing-box 1.13+)
  * Supports Shadowsocks, VLESS, VMess, and Trojan outbounds
  */
-async function generateSingBoxConfig(profile, excluded = []) {
-  const protocol = (profile.protocol || profile.type || 'shadowsocks').toLowerCase();
+async function generateSingBoxConfig(profile = {}, excluded = []) {
+  const protocol = (profile.protocol || profile.type || DEFAULT_SERVER.protocol || 'vless').toLowerCase();
   const server = profile.server || DEFAULT_SERVER.server;
   const port = parseInt(profile.port || DEFAULT_SERVER.port, 10);
   const bypass = excluded.filter(e => e && e.exe).map(e => e.exe);
@@ -231,18 +275,32 @@ async function generateSingBoxConfig(profile, excluded = []) {
   // Construct sing-box outbound based on protocol
   let proxyOutbound = null;
 
+  function formatTransport(prof) {
+    const transport = prof.transport || DEFAULT_SERVER.transport;
+    if (!transport) return undefined;
+    const t = JSON.parse(JSON.stringify(transport));
+    if (t.type === 'ws') {
+      t.headers = t.headers || {};
+      if (!t.headers.Host && (prof.sni || prof.server || DEFAULT_SERVER.sni)) {
+        t.headers.Host = prof.sni || prof.server || DEFAULT_SERVER.sni;
+      }
+    }
+    return t;
+  }
+
   if (protocol === 'vless') {
     proxyOutbound = {
       type: 'vless',
       tag: 'proxy',
       server: serverIps[0] || server,
       server_port: port,
-      uuid: profile.uuid || profile.password || 'de305d54-75b3-431b-a0ce-b8724def4f6b'
+      uuid: profile.uuid || profile.password || DEFAULT_SERVER.uuid || '631c15ae-3f60-4019-9df6-7e94063fc151'
     };
     if (profile.flow) {
       proxyOutbound.flow = profile.flow;
     }
-    if (profile.tls) {
+    const isTls = profile.tls !== undefined ? profile.tls : DEFAULT_SERVER.tls;
+    if (isTls) {
       proxyOutbound.tls = {
         enabled: true,
         server_name: profile.sni || server,
@@ -254,10 +312,14 @@ async function generateSingBoxConfig(profile, excluded = []) {
           public_key: profile.reality.public_key,
           short_id: profile.reality.short_id || ''
         };
+        proxyOutbound.tls.utls = {
+          enabled: true,
+          fingerprint: profile.fingerprint || 'chrome'
+        };
       }
     }
-    if (profile.transport) {
-      proxyOutbound.transport = profile.transport;
+    if (profile.transport || DEFAULT_SERVER.transport) {
+      proxyOutbound.transport = formatTransport(profile);
     }
   } else if (protocol === 'vmess') {
     proxyOutbound = {
@@ -277,7 +339,7 @@ async function generateSingBoxConfig(profile, excluded = []) {
       };
     }
     if (profile.transport) {
-      proxyOutbound.transport = profile.transport;
+      proxyOutbound.transport = formatTransport(profile);
     }
   } else if (protocol === 'trojan') {
     proxyOutbound = {
@@ -293,7 +355,7 @@ async function generateSingBoxConfig(profile, excluded = []) {
       }
     };
     if (profile.transport) {
-      proxyOutbound.transport = profile.transport;
+      proxyOutbound.transport = formatTransport(profile);
     }
   } else {
     // Default: Shadowsocks
@@ -314,13 +376,15 @@ async function generateSingBoxConfig(profile, excluded = []) {
     },
     dns: {
       servers: [
-        { tag: "remote", type: "https", server: "1.1.1.1", detour: "proxy" },
+        { tag: "fakeip", type: "fakeip", inet4_range: "198.18.0.0/15" },
+        { tag: "remote", type: "https", server: "8.8.8.8", detour: "proxy" },
         { tag: "local", type: "local" }
       ],
       rules: [
         { domain: [server], server: "local" },
         ...(bypass.length ? [{ process_name: bypass, server: "local" }] : []),
-        { query_type: ["A", "AAAA"], server: "remote", strategy: "ipv4_only" }
+        { query_type: ["HTTPS"], action: "reject" },
+        { query_type: ["A", "AAAA"], server: "fakeip" }
       ],
       final: "local"
     },
@@ -367,6 +431,8 @@ async function generateSingBoxConfig(profile, excluded = []) {
 module.exports = {
   DEFAULT_SERVER,
   DEFAULT_SUB_URL,
+  BUNDLED_PROFILES,
+  getBundledProfiles,
   parseSSUrl,
   parseProxyUrl,
   fetchSubscription,
