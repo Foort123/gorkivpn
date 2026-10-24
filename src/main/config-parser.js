@@ -392,7 +392,10 @@ async function generateSingBoxConfig(profile = {}, excluded = []) {
       {
         type: "tun",
         tag: "tun-in",
-        address: ["172.19.0.1/30"],
+        // IPv6-адрес нужен, даже когда наружу ходим только по v4: без него у TUN нет
+        // v6-маршрута, и приложение, предпочитающее IPv6 или идущее на литеральный
+        // v6-адрес, уходит мимо туннеля через физический адаптер.
+        address: ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
         mtu: 9000,
         auto_route: true,
         strict_route: false,

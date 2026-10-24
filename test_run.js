@@ -3,7 +3,7 @@ const path = require('path');
 const http = require('http');
 const dnsp = require('dns').promises;
 const net = require('net');
-const { DEFAULT_SERVER } = require('./src/main/config-parser');
+const { DEFAULT_SERVER, buildOutbound } = require('./src/main/config-parser');
 
 const binPath = path.join(__dirname, 'bin', 'sing-box.exe');
 const configPath = path.join(__dirname, 'test_run_config.json');
@@ -28,14 +28,7 @@ const configObj = {
         listen: '127.0.0.1',
         listen_port: 10808
     }],
-    outbounds: [{
-        type: 'shadowsocks',
-        tag: 'proxy',
-        server: serverIp,
-        server_port: DEFAULT_SERVER.port,
-        method: DEFAULT_SERVER.cipher,
-        password: DEFAULT_SERVER.password
-    }, {
+    outbounds: [buildOutbound(DEFAULT_SERVER, serverIp), {
         type: 'direct',
         tag: 'direct'
     }]

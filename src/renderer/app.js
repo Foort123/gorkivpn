@@ -1,9 +1,10 @@
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, clipboard } = require('electron');
 const crypto = require('crypto');
+const fs = require('fs');
 
 // SHA-256 пароля вместо самого пароля. Настоящей защиты это не даёт — код клиента
 // распаковывается из app.asar, — но и читать пароль глазами в исходниках не приходится.
-const PASSWORD_HASH = 'c3198dd7f993d0e7eca09c9b361e5536a11c3eba55074ded531926747c5baf8b';
+const PASSWORD_HASH = '011339d2e317ab9491fafba23e98ba98ed86371c735fd8e7ddf5b9687c28d3da';
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 // Замок: спрашиваем пароль один раз на устройство. Флаг живёт в localStorage,
@@ -65,6 +66,12 @@ const closeProcModalBtn = document.getElementById('closeProcModalBtn');
 const procSearch = document.getElementById('procSearch');
 const procList = document.getElementById('procList');
 
+// Консоль
+const consoleBtn = document.getElementById('consoleBtn');
+const consolePanel = document.getElementById('consolePanel');
+const consoleOut = document.getElementById('consoleOut');
+const copyLogBtn = document.getElementById('copyLogBtn');
+
 const CLASH_API = 'http://127.0.0.1:9090';
 
 // State
@@ -79,6 +86,58 @@ let logPath = null;
 // Намеренно только в памяти: список выбирается заново после каждого перезапуска
 let excluded = [];
 
+// --- Консоль -------------------------------------------------------------
+// Причина отказа всегда была в логе sing-box, но за ним приходилось идти руками
+// в userData. Панель показывает шаги клиента и хвост этого лога рядом, а на
+// ошибке открывается сама — чтобы «не подключается» сразу имело объяснение.
+const appLog = [];
+let consoleTimer = null;
+
+function isConsoleOpen() {
+  return !consolePanel.classList.contains('hidden');
+}
+
+function pushLog(line) {
+  appLog.push(`[${new Date().toLocaleTimeString()}] ${line}`);
+  if (appLog.length > 200) appLog.shift();
+  if (isConsoleOpen()) renderConsole();
+}
+
+function readSingBoxLog() {
+  if (!logPath) return '(путь к логу ещё не получен)';
+  try {
+    // ProxyManager обнуляет лог на каждом старте, поэтому в файле только текущая попытка
+    return fs.readFileSync(logPath, 'utf-8').split('\n').slice(-300).join('\n');
+  } catch (e) {
+    return '(sing-box ещё ни разу не запускался)';
+  }
+}
+
+function renderConsole() {
+  // прокрутку не дёргаем, если лог листают руками
+  const atBottom = consoleOut.scrollHeight - consoleOut.scrollTop - consoleOut.clientHeight < 24;
+  consoleOut.textContent = `${appLog.join('\n')}\n\n--- sing-box ---\n${readSingBoxLog()}`;
+  if (atBottom) consoleOut.scrollTop = consoleOut.scrollHeight;
+}
+
+function showConsole(show) {
+  consolePanel.classList.toggle('hidden', !show);
+  clearInterval(consoleTimer);
+  consoleTimer = show ? setInterval(renderConsole, 1000) : null;
+  if (show) {
+    renderConsole();
+    consoleOut.scrollTop = consoleOut.scrollHeight;
+  }
+}
+
+consoleBtn.addEventListener('click', () => showConsole(!isConsoleOpen()));
+
+copyLogBtn.addEventListener('click', () => {
+  clipboard.writeText(consoleOut.textContent);
+  copyLogBtn.textContent = 'Скопировано';
+  setTimeout(() => { copyLogBtn.textContent = 'Копировать'; }, 1500);
+});
+
 // Initialize App
 async function init() {
   profiles = await ipcRenderer.invoke('get-profiles');
@@ -89,6 +148,8 @@ async function init() {
   const status = await ipcRenderer.invoke('get-status');
   isConnected = status.isConnected;
   logPath = status.logPath;
+  pushLog(`Клиент запущен. Лог sing-box: ${logPath}`);
+  if (activeProfile) pushLog(`Активный сервер: ${activeProfile.server}:${activeProfile.port}`);
   if (status.currentProfile) {
     activeProfile = status.currentProfile;
   }
@@ -405,7 +466,11 @@ async function applyExclusions() {
   const res = await ipcRenderer.invoke('connect-vpn', activeProfile, excluded);
   isConnected = !!res.success;
   updateUIState();
-  if (!res.success) statusSubtext.textContent = res.error || 'Не удалось применить исключения';
+  if (!res.success) {
+    statusSubtext.textContent = res.error || 'Не удалось применить исключения';
+    pushLog(`ОШИБКА при применении исключений: ${res.error || 'причина не указана'}`);
+    showConsole(true);
+  }
 }
 
 addExcludeBtn.addEventListener('click', async () => {
@@ -440,15 +505,20 @@ connectBtn.addEventListener('click', async () => {
     document.body.classList.add('connecting');
     statusText.textContent = 'ПОДКЛЮЧЕНИЕ...';
     statusSubtext.textContent = `Установление туннеля к ${activeProfile.server}`;
+    pushLog(`Подключение к ${activeProfile.server}:${activeProfile.port}${excluded.length ? `, мимо туннеля: ${excluded.map(e => e.exe).join(', ')}` : ''}`);
 
     const res = await ipcRenderer.invoke('connect-vpn', activeProfile, excluded);
     if (res.success) {
       isConnected = true;
+      pushLog('Туннель поднят');
       updateUIState();
     } else {
       document.body.classList.remove('connecting');
       statusText.textContent = 'ОШИБКА';
       statusSubtext.textContent = res.error || 'Не удалось подключиться к серверу';
+      pushLog(`ОШИБКА: ${res.error || 'причина не указана'}`);
+      // Открываем консоль сами: иначе на экране остаётся голое «ОШИБКА»
+      showConsole(true);
     }
   }
 });

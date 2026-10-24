@@ -26,3 +26,8 @@ desktop.ini
 
 # Electron builder cache
 .cache/
+
+# Временные конфиги тестов (пишутся и удаляются на лету)
+test_run_config.json
+test_config.tmp.json
+test_config.json

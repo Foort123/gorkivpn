@@ -4,7 +4,7 @@ const fs = require('fs');
 const net = require('net');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { generateSingBoxConfig, parseSSUrl } = require('./src/main/config-parser');
+const { DEFAULT_SERVER, generateSingBoxConfig, parseSSUrl } = require('./src/main/config-parser');
 const { groupProcesses } = require('./src/main/processes');
 const ProxyManager = require('./src/main/proxy-manager');
 
@@ -26,8 +26,9 @@ function singBoxAccepts(cfg) {
   const plain = await generateSingBoxConfig(profile);
   const ss = plain.outbounds.find(o => o.tag === 'proxy');
   assert.deepStrictEqual(
-    [ss.server_port, ss.method, ss.password],
-    [1234, 'aes-256-gcm', 'pw']
+    [ss.type, ss.server_port, ss.method, ss.password],
+    ['shadowsocks', 1234, 'aes-256-gcm', 'pw'],
+    'профиль с password остаётся shadowsocks — свои ss:// ключи ломать нельзя'
   );
   // В аутбаунд идёт IP, а не домен: резолвер sing-box ("local") отвечает не на каждой
   // машине, и подключение вешалось на 10 с ещё до попытки хендшейка.
@@ -44,6 +45,31 @@ function singBoxAccepts(cfg) {
     'nx.invalid',
     'при отказе резолва остаётся домен, а не undefined'
   );
+
+  // Профиль по умолчанию — VLESS + REALITY: голый shadowsocks через Railway TCP Proxy
+  // режет DPI, а HTTP-вход Railway заблокирован по IP, так что остаётся маскировка
+  // рукопожатия под визит на посторонний сайт.
+  const def = await generateSingBoxConfig({});
+  const vl = def.outbounds.find(o => o.tag === 'proxy');
+  assert.strictEqual(vl.type, 'vless', 'по умолчанию VLESS, а не shadowsocks');
+  assert.ok(vl.uuid, 'uuid подставлен из DEFAULT_SERVER, а не потерян');
+  assert.strictEqual(vl.flow, 'xtls-rprx-vision', 'flow обязан совпадать с серверным');
+  assert.strictEqual(vl.tls.enabled, true, 'REALITY живёт поверх TLS');
+  // Самая дорогая ошибка в этой схеме: подставить в SNI адрес нашего сервера. Сервер
+  // заимствует сертификат у сайта прикрытия именно по этому имени, и при подмене
+  // рукопожатие рушится, а в логе остаётся лишь "processed invalid connection".
+  assert.strictEqual(vl.tls.server_name, DEFAULT_SERVER.reality.sni, 'в SNI сайт прикрытия');
+  assert.notStrictEqual(vl.tls.server_name, DEFAULT_SERVER.server, 'в SNI не наш адрес');
+  // Без uTLS REALITY не проходит проверку на стороне сервера
+  assert.strictEqual(vl.tls.utls.enabled, true, 'uTLS включён');
+  assert.strictEqual(vl.tls.reality.enabled, true, 'REALITY включён');
+  assert.strictEqual(vl.tls.reality.public_key, DEFAULT_SERVER.reality.publicKey);
+  assert.strictEqual(vl.tls.reality.short_id, DEFAULT_SERVER.reality.shortId);
+  assert.ok(singBoxAccepts(def), 'sing-box принимает конфиг профиля по умолчанию');
+
+  // Профили прошлых переездов ломать нельзя: ветка vmess должна остаться рабочей
+  const legacy = await generateSingBoxConfig({ server: 'example.net', port: 443, uuid: 'u', wsPath: '/p' });
+  assert.strictEqual(legacy.outbounds.find(o => o.tag === 'proxy').type, 'vmess', 'старый vmess-профиль жив');
   assert.strictEqual(plain.dns.rules[0].domain[0], 'example.net', 'домен сервера резолвится локально');
   assert.ok(!JSON.stringify(plain).includes('process_name'), 'без исключений правил процессов нет');
   assert.ok(singBoxAccepts(plain), 'sing-box принимает базовый конфиг');
